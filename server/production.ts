@@ -10,7 +10,7 @@ const url=process.env.SUPABASE_URL,serviceKey=process.env.SUPABASE_SERVICE_ROLE_
 if(!url||!serviceKey||!anonKey)throw new Error('SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are required in production.');
 const app=express();const admin=createClient(url,serviceKey,{auth:{persistSession:false,autoRefreshToken:false}});const auth=createClient(url,anonKey,{auth:{persistSession:false,autoRefreshToken:false}});const store=createSupabaseAdapter(url,serviceKey);const previews=new Map<string,{owner:string;data:any;expires:number}>();
 app.disable('x-powered-by');app.use(express.json({limit:'14mb'}));app.use((req,_res,next)=>{if(req.path==='/api/auth/login'&&!req.body.username&&req.body.email)req.body.username=req.body.email;next()});
-app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Cache-Control','no-store');if(req.method!=='GET'&&req.headers.origin&&req.headers.origin!==process.env.APP_ORIGIN){res.status(403).json({error:{code:'ORIGIN',message:'Nguồn yêu cầu không hợp lệ'}});return}next()});
+app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Cache-Control','no-store');if(req.method!=='GET'&&process.env.APP_ORIGIN&&req.headers.origin&&req.headers.origin!==process.env.APP_ORIGIN){res.status(403).json({error:{code:'ORIGIN',message:'Nguồn yêu cầu không hợp lệ'}});return}next()});
 const cookie=(req:express.Request)=>req.headers.cookie?.match(/(?:^|;\s*)tc_session=([^;]+)/)?.[1]||'';
 const tokenOf=(req:express.Request)=>decodeURIComponent(cookie(req));
 const setSession=(res:express.Response,token:string)=>res.cookie('tc_session',encodeURIComponent(token),{httpOnly:true,sameSite:'strict',secure:true,maxAge:1000*60*60*24*7,path:'/'});
