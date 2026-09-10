@@ -20,3 +20,4 @@ test-results/
 /bao_cao_cuoi_ngay.txt
 *.zip
 .DS_Store
+supabase/.temp/
