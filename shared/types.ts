@@ -1,5 +1,8 @@
 export type Money = string;
-export interface User { id:string; email:string; username:string; displayName:string }
+export type UserRole='admin'|'employee';
+export interface User { id:string; email:string; username:string; displayName:string; role:UserRole; active:boolean }
+export interface EmployeeAccount {id:string;email:string;username:string;displayName:string;role:UserRole;active:boolean;createdAt:string;updatedAt:string}
+export interface TeamMember extends EmployeeAccount {summary:AppState['summary'];stateVersion:number;stateUpdatedAt:string|null}
 export interface Product {id:string; name:string; code:string; group:string; brand:string; variant:string; unit:string; pack:number; cost:Money|null; price:Money|null; effectiveDate:string; archived?:boolean}
 export interface Customer {id:string; name:string; contact:string; phone:string; email:string; address:string; street:string; ward:string; district:string; province:string; route:string; visitDays:number[]; frequency:string; storeType:string; notes:string; openedDate:string; archived?:boolean}
 export interface OrderLine {id:string; productId:string; name:string; quantity:number; price:Money; cost:Money|null; ceiling:Money|null; pack:number; unit:string; kind:'sale'|'gift'|'display'; sponsor:'employee'|'company'; discount:Money; delivered:number; returned:number; fixedPrice?:boolean}

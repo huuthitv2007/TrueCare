@@ -14,7 +14,7 @@ const passwordHash=(password:string)=>{const salt=randomBytes(16).toString('hex'
 const verify=(password:string,stored:string)=>{const [salt,key]=stored.split(':');return timingSafeEqual(scryptSync(password,salt,64),Buffer.from(key,'hex'))};
 const read=(owner:string):AppState=>refresh(JSON.parse((db.prepare('SELECT data FROM states WHERE owner_id=?').get(owner) as any).data));
 const write=(owner:string,s:AppState)=>db.prepare('UPDATE states SET data=? WHERE owner_id=?').run(JSON.stringify(s),owner);
-const publicUser=(u:any):User=>({id:u.id,email:u.email,username:u.username,displayName:u.display_name});
+const publicUser=(u:any):User=>({id:u.id,email:u.email,username:u.username,displayName:u.display_name,role:'employee',active:true});
 const cookie=(req:express.Request)=>{const match=req.headers.cookie?.match(/(?:^|;\s*)tc_session=([^;]+)/);return match?match[1]:''};
 const getUser=(req:express.Request)=>db.prepare('SELECT users.* FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token=? AND sessions.expires>?').get(hash(cookie(req)),Date.now()) as any;
 const session=(res:express.Response,userId:string)=>{const token=randomBytes(32).toString('hex');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(hash(token),userId,Date.now()+1000*60*60*24*7);res.cookie('tc_session',token,{httpOnly:true,sameSite:'strict',secure:process.env.NODE_ENV==='production',maxAge:1000*60*60*24*7,path:'/'});};
