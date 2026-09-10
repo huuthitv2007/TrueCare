@@ -27,7 +27,12 @@ import {
 
 export function SalesReport({ mode }: { mode: ReportMode }) {
   const { state } = useWorkspace();
-  const initial = { from: state.settings.periodStart, to: today(), query: "" };
+  const initial = {
+    from: state.settings.periodStart,
+    to: today(),
+    query: "",
+    subtractDiscount: true,
+  };
   const [draft, setDraft] = useState(initial);
   const [applied, setApplied] = useState(initial);
   const [groups, setGroups] = useState<string[]>(["date"]);
@@ -83,6 +88,21 @@ export function SalesReport({ mode }: { mode: ReportMode }) {
             onChange={(query) => setDraft((x) => ({ ...x, query }))}
             placeholder="Khách hàng, sản phẩm, địa chỉ…"
           />
+          {mode === "delivered" && (
+            <label className="check-label">
+              <input
+                type="checkbox"
+                checked={draft.subtractDiscount}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    subtractDiscount: event.target.checked,
+                  }))
+                }
+              />
+              Trừ chiết khấu
+            </label>
+          )}
           <Button variant="primary" onClick={() => setApplied(draft)}>
             <Filter size={16} />
             Áp dụng
@@ -93,6 +113,12 @@ export function SalesReport({ mode }: { mode: ReportMode }) {
           </Button>
         </div>
         <div className="stats-inline">
+          {mode === "delivered" && (
+            <span>
+              Tiền hàng:{" "}
+              {applied.subtractDiscount ? "đã trừ CK" : "chưa trừ CK"}
+            </span>
+          )}
           <span>
             Tiền hàng <strong>{money(total.revenue)}</strong>
           </span>

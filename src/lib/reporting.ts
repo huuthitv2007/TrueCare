@@ -14,6 +14,8 @@ export interface ReportFilters {
   brand?: string;
   hasGift?: boolean;
   negativeMargin?: boolean;
+  /** Only changes displayed delivered revenue; KPI and fund always use ledger values. */
+  subtractDiscount?: boolean;
 }
 export interface ReportRow {
   id: string;
@@ -166,7 +168,9 @@ export function reportRows(
               line,
               delivery.date,
               part.quantity,
-              part.revenue,
+              filters.subtractDiscount === false && line.kind === "sale"
+                ? D(line.price).times(part.quantity).toFixed()
+                : part.revenue,
               line.cost === null
                 ? null
                 : D(line.cost).times(part.quantity).toFixed(),
@@ -185,7 +189,9 @@ export function reportRows(
               line,
               returned.date,
               -part.quantity,
-              D(part.revenue).neg().toFixed(),
+              filters.subtractDiscount === false && line.kind === "sale"
+                ? D(line.price).times(part.quantity).neg().toFixed()
+                : D(part.revenue).neg().toFixed(),
               line.cost === null
                 ? null
                 : D(line.cost).times(-part.quantity).toFixed(),
