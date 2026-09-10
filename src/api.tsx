@@ -6,6 +6,6 @@ export async function request<T=any>(path:string, body?:unknown, method?:string)
  if(!response.ok) throw new Error(typeof result.error==='string'?result.error:result.error?.message||result.message||'Không thực hiện được. Vui lòng thử lại.');
  return result;
 }
-export interface WorkspaceContext {state:AppState;user:User;command:(type:string,payload:unknown)=>Promise<AppState>;refresh:()=>Promise<void>;notify:(message:string)=>void;busy:boolean;adminTarget:EmployeeAccount|null;setAdminTarget:(target:EmployeeAccount|null)=>void;adminReason:string;setAdminReason:(reason:string)=>void}
+export interface WorkspaceContext {state:AppState;user:User;command:(type:string,payload:unknown)=>Promise<AppState>;workspaceRequest:<T=any>(path:string,body?:unknown,method?:string)=>Promise<T>;refresh:()=>Promise<void>;notify:(message:string)=>void;busy:boolean;adminTarget:EmployeeAccount|null;setAdminTarget:(target:EmployeeAccount|null)=>void;adminReason:string;setAdminReason:(reason:string)=>void}
 export const AppContext=createContext<WorkspaceContext|null>(null);
 export function useWorkspace(){const ctx=useContext(AppContext);if(!ctx)throw new Error('Thiếu phiên làm việc');return ctx}
