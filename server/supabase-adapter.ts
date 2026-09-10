@@ -10,7 +10,7 @@ export function createSupabaseAdapter(url:string,serviceKey:string){
  async function stateOf(owner:string):Promise<AppState>{const {data,error}=await admin.from('employee_states').select('state').eq('owner_id',owner).maybeSingle();if(error)throw new DomainError('STORAGE','Không đọc được dữ liệu',503);if(!data){const state=emptyState();const inserted=await admin.from('employee_states').insert({owner_id:owner,state,version:0});if(inserted.error&&inserted.error.code!=='23505')throw new DomainError('STORAGE','Không khởi tạo được dữ liệu',503);return stateOf(owner)}return refresh(data.state as AppState)}
  return {
   async getState(jwt:string){return stateOf(await ownerOf(jwt))},
-  async execute(jwt:string,command:Command){
+ async execute(jwt:string,command:Command){
    const owner=await ownerOf(jwt);assert(typeof command.idempotencyKey==='string'&&command.idempotencyKey.length>=8,'Thiếu khóa chống lặp');
    const fingerprint=createHash('sha256').update(JSON.stringify({type:command.type,payload:command.payload})).digest('hex');
    const prior=await admin.from('command_receipts').select('fingerprint').eq('owner_id',owner).eq('command_key',command.idempotencyKey).maybeSingle();
@@ -19,6 +19,13 @@ export function createSupabaseAdapter(url:string,serviceKey:string){
    const current=await stateOf(owner);const next=execute(current,command);
    const {data,error}=await admin.rpc('commit_employee_command',{p_owner:owner,p_expected:current.version,p_key:command.idempotencyKey,p_fingerprint:fingerprint,p_state:next});
    if(error)throw new DomainError(error.message.includes('CONFLICT')?'CONFLICT':'STORAGE',error.message.includes('CONFLICT')?'Dữ liệu đã thay đổi. Hãy tải lại.':'Chưa lưu được thao tác',409);
+   return refresh(data as AppState);
+  },
+  async commitState(jwt:string,command:Command,next:AppState){
+   const owner=await ownerOf(jwt);assert(command.version!==undefined,'Thiếu phiên bản dữ liệu');assert(typeof command.idempotencyKey==='string'&&command.idempotencyKey.length>=8,'Thiếu khóa chống lặp');
+   const fingerprint=createHash('sha256').update(JSON.stringify({type:command.type,payload:command.payload})).digest('hex');
+   const {data,error}=await admin.rpc('commit_employee_command',{p_owner:owner,p_expected:command.version,p_key:command.idempotencyKey,p_fingerprint:fingerprint,p_state:next});
+   if(error)throw new DomainError(error.message.includes('CONFLICT')?'CONFLICT':'STORAGE',error.message.includes('CONFLICT')?'Dữ liệu đã thay đổi. Vui lòng tải lại.':'Chưa lưu được thao tác',error.message.includes('CONFLICT')?409:503);
    return refresh(data as AppState);
   }
  };
