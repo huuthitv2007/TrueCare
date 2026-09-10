@@ -1,8 +1,9 @@
 # TrueCare — không gian bán hàng cá nhân
 
 Ứng dụng cho nhân viên theo dõi khách hàng, toa hàng, giao thực tế, tồn kho,
-quỹ dư, khuyến mãi/suất chào và báo cáo cuối ngày. Dữ liệu của mỗi tài khoản
-được tách riêng.
+quỹ dư, khuyến mãi/suất chào và báo cáo cuối ngày. Toa, giao hàng, quỹ và báo
+cáo tách theo tài khoản; khách hàng, sản phẩm và danh mục lựa chọn dùng chung
+toàn đội.
 
 ## Chạy cục bộ
 
@@ -28,12 +29,15 @@ npm run test
 npm run build
 ```
 
-Các kiểm tra hiện bao gồm quy đổi thùng/lẻ, quỹ chỉ theo thực giao, giao nhiều
-lần, trả hàng, thiếu giá vốn, giới hạn hỗ trợ 200.000đ mỗi suất, giữ quỹ/tồn,
-trần giá chào, kiểm tra nhập Excel/TXT và báo cáo theo ngày giao/đặt.
+Các kiểm tra hiện bao gồm quy đổi thùng/lẻ, KPI và quỹ theo thực giao, quà
+TrueCare tính KPI theo giá gốc, giao nhiều lần, trả hàng, sửa/xoá/khôi phục toa,
+hoàn kho không lặp, giới hạn hỗ trợ 200.000đ mỗi suất, trần giá chào, nhập
+Excel/TXT, phân quyền và báo cáo theo ngày giao/đặt.
 
 ## Triển khai dữ liệu thật
 
-`supabase/migrations/` chứa nền tảng RLS và giao dịch có khóa chống gửi lặp.
-Chỉ triển khai sau khi cấu hình Supabase và email xác thực; không đưa secret
-key vào biến `VITE_*`. Chưa có kết nối ghi dữ liệu vào website HPT.
+`supabase/migrations/` chứa RLS, giao dịch có khóa chống gửi lặp và migration
+danh mục dùng chung. Migration `202609110003_shared_directory.sql` giữ nguyên
+mọi ID cũ, không tự gộp sản phẩm/khách trùng tên và đánh dấu sản phẩm cũ để
+admin đối chiếu. Sao lưu `employee_states` trước khi áp dụng; không đưa secret
+key vào biến `VITE_*`. Ứng dụng không ghi dữ liệu vào website HPT.

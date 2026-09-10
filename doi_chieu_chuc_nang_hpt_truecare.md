@@ -2,6 +2,20 @@
 
 Ngày lập: 10/09/2026. Tài liệu đi kèm `ke_hoach_website_truecare.md`, theo yêu cầu clone toàn bộ chức năng website tham khảo.
 
+## Tiến độ triển khai 11/09/2026
+
+- Đã triển khai danh mục sản phẩm/khách hàng dùng chung, metadata người tạo và
+  giới hạn sửa khách 24 giờ; dữ liệu cũ không rõ nguồn được khóa sửa với nhân
+  viên.
+- Đã triển khai quyền backend: nhân viên không sửa sản phẩm, danh mục hoặc tồn
+  kho, kể cả qua lệnh API và tệp nhập bảng giá.
+- Đã triển khai sửa toa đã chốt có lý do/phiên bản, nhập lại thực giao, xoá mềm,
+  hoàn kho, đảo KPI/quỹ và thùng tạm giữ để admin khôi phục/xoá hoàn toàn.
+- KPI thực giao đã gồm hàng tặng TrueCare theo giá gốc. Báo cáo loại toa trong
+  thùng tạm giữ, hỗ trợ nhóm nhiều cấp, mở toa từ chi tiết và xuất KPI/quỹ.
+- Các hành vi HPT chưa quan sát trực tiếp vẫn giữ trạng thái “Chưa kiểm chứng”;
+  không dùng kết quả build làm bằng chứng tương đương HPT.
+
 ## Phạm vi và cách dùng
 
 - Bao phủ toàn bộ chức năng của tài khoản nhân viên có quyền truy cập trên website tham khảo, cộng các phần TrueCare đã chốt. Không chỉ clone hình ảnh hoặc vài màn hình chính.

@@ -1,41 +1,512 @@
-import express from 'express';
-import { DatabaseSync } from 'node:sqlite';
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import path from 'node:path';
-import { emptyState, execute, refresh, previewPrograms, DomainError, assert } from './domain.js';
-import type { AppState, User } from '../shared/types.js';
+import express from "express";
+import { DatabaseSync } from "node:sqlite";
+import {
+  randomBytes,
+  randomUUID,
+  scryptSync,
+  timingSafeEqual,
+  createHash,
+} from "node:crypto";
+import { mkdirSync } from "node:fs";
+import path from "node:path";
+import {
+  emptyState,
+  execute,
+  refresh,
+  previewPrograms,
+  DomainError,
+  assert,
+} from "./domain.js";
+import type { AppState, User } from "../shared/types.js";
 
-const app=express();app.disable('x-powered-by');app.use(express.json({limit:'14mb'}));
-app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Cache-Control','no-store');if(req.method!=='GET'&&req.headers.origin){const origin=new URL(req.headers.origin);if(origin.hostname!=='localhost'&&origin.hostname!=='127.0.0.1'&&origin.origin!==process.env.APP_ORIGIN){res.status(403).json({error:{code:'ORIGIN',message:'Nguồn yêu cầu không hợp lệ'}});return}}next()});
-const dir=process.env.TRUECARE_DATA_DIR??path.resolve('.local-data');mkdirSync(dir,{recursive:true});const db=new DatabaseSync(path.join(dir,'truecare.sqlite'));db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,username TEXT UNIQUE NOT NULL,display_name TEXT NOT NULL,password TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS states(owner_id TEXT PRIMARY KEY REFERENCES users(id),data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS commands(owner_id TEXT NOT NULL,key TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(owner_id,key)); CREATE TABLE IF NOT EXISTS previews(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,data TEXT NOT NULL,expires INTEGER NOT NULL);');
-const hash=(str:string)=>createHash('sha256').update(str).digest('hex');
-const passwordHash=(password:string)=>{const salt=randomBytes(16).toString('hex');return salt+':'+scryptSync(password,salt,64).toString('hex')};
-const verify=(password:string,stored:string)=>{const [salt,key]=stored.split(':');return timingSafeEqual(scryptSync(password,salt,64),Buffer.from(key,'hex'))};
-const read=(owner:string):AppState=>refresh(JSON.parse((db.prepare('SELECT data FROM states WHERE owner_id=?').get(owner) as any).data));
-const write=(owner:string,s:AppState)=>db.prepare('UPDATE states SET data=? WHERE owner_id=?').run(JSON.stringify(s),owner);
-const publicUser=(u:any):User=>({id:u.id,email:u.email,username:u.username,displayName:u.display_name,role:'employee',active:true});
-const cookie=(req:express.Request)=>{const match=req.headers.cookie?.match(/(?:^|;\s*)tc_session=([^;]+)/);return match?match[1]:''};
-const getUser=(req:express.Request)=>db.prepare('SELECT users.* FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token=? AND sessions.expires>?').get(hash(cookie(req)),Date.now()) as any;
-const session=(res:express.Response,userId:string)=>{const token=randomBytes(32).toString('hex');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(hash(token),userId,Date.now()+1000*60*60*24*7);res.cookie('tc_session',token,{httpOnly:true,sameSite:'strict',secure:process.env.NODE_ENV==='production',maxAge:1000*60*60*24*7,path:'/'});};
-const transaction=<T,>(fn:()=>T):T=>{db.exec('BEGIN IMMEDIATE');try{const result=fn();db.exec('COMMIT');return result}catch(e){db.exec('ROLLBACK');throw e}};
-const asyncRoute=(fn:express.RequestHandler):express.RequestHandler=>(req,res,next)=>{Promise.resolve(fn(req,res,next)).catch(next)};
-const rates=new Map<string,{count:number,until:number}>();
-app.use('/api/auth',(req,res,next)=>{const key=req.ip??'local';let r=rates.get(key);if(!r||r.until<Date.now()){r={count:0,until:Date.now()+60000};rates.set(key,r)}if(req.method==='POST'&&++r.count>30){res.status(429).json({error:{code:'RATE_LIMIT',message:'Thử lại sau một phút'}});return}next()});
-app.get('/api/health',(_req,res)=>res.json({ok:true,mode:'local',productionReady:false}));
-app.get('/api/auth/session',(req,res)=>{const user=getUser(req);res.json({user:user?publicUser(user):null,mode:'local'})});
-app.post('/api/auth/register',asyncRoute((req,res)=>{const {email,username,password,displayName,companyCode='TRUECARE'}=req.body;assert(companyCode.toUpperCase()==='TRUECARE','Mã công ty không hợp lệ');assert(typeof email==='string'&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),'Email không hợp lệ');assert(typeof username==='string'&&/^[a-zA-Z0-9_.-]{3,40}$/.test(username),'Tên đăng nhập từ 3–40 ký tự');assert(typeof password==='string'&&password.length>=10&&password.length<=200,'Mật khẩu từ 10 đến 200 ký tự');const user={id:randomUUID(),email:email.toLowerCase(),username:username.toLowerCase(),display_name:String(displayName??username),password:passwordHash(password)};transaction(()=>{assert(!db.prepare('SELECT id FROM users WHERE email=? OR username=?').get(user.email,user.username),'Không thể đăng ký với thông tin này');db.prepare('INSERT INTO users VALUES(?,?,?,?,?)').run(user.id,user.email,user.username,user.display_name,user.password);db.prepare('INSERT INTO states VALUES(?,?)').run(user.id,JSON.stringify(emptyState(user.display_name)))});session(res,user.id);res.json({user:publicUser(user),mode:'local',message:'Tài khoản phát triển cục bộ; chưa xác minh email.'})}));
-app.post('/api/auth/login',asyncRoute((req,res)=>{const {username,password,companyCode='TRUECARE'}=req.body;assert(typeof username==='string'&&typeof password==='string'&&password.length<=200,'Thông tin đăng nhập không hợp lệ');const user=db.prepare('SELECT * FROM users WHERE username=? OR email=?').get(username.toLowerCase(),username.toLowerCase()) as any;assert(companyCode.toUpperCase()==='TRUECARE'&&user&&verify(password,user.password),'Thông tin đăng nhập không hợp lệ','AUTH');session(res,user.id);res.json({user:publicUser(user),mode:'local'})}));
-app.post('/api/auth/logout',(req,res)=>{db.prepare('DELETE FROM sessions WHERE token=?').run(hash(cookie(req)));res.clearCookie('tc_session',{path:'/'});res.json({ok:true})});
-app.post('/api/auth/forgot-password',(_req,res)=>res.status(501).json({error:{code:'EMAIL_NOT_CONFIGURED',message:'Bản cục bộ chưa có dịch vụ email. Luồng khôi phục email cần cấu hình Supabase trước khi sử dụng thật.'}}));
-app.use('/api',(req,res,next)=>{const user=getUser(req);if(!user){res.status(401).json({error:{code:'AUTH',message:'Vui lòng đăng nhập'}});return}res.locals.user=user;next()});
-app.post('/api/auth/change-password',asyncRoute((req,res)=>{const user=res.locals.user;assert(typeof req.body.oldPassword==='string'&&verify(req.body.oldPassword,user.password),'Mật khẩu hiện tại không đúng');assert(typeof req.body.newPassword==='string'&&req.body.newPassword.length>=10&&req.body.newPassword.length<=200,'Mật khẩu mới từ 10 đến 200 ký tự');transaction(()=>{db.prepare('UPDATE users SET password=? WHERE id=?').run(passwordHash(req.body.newPassword),user.id);db.prepare('DELETE FROM sessions WHERE user_id=?').run(user.id)});session(res,user.id);res.json({ok:true})}));
-app.post('/api/auth/revoke-sessions',(req,res)=>{db.prepare('DELETE FROM sessions WHERE user_id=? AND token<>?').run(res.locals.user.id,hash(cookie(req)));res.json({ok:true})});
-app.get('/api/state',(_req,res)=>res.json(read(res.locals.user.id)));
-app.post('/api/commands',asyncRoute((req,res)=>{const owner=res.locals.user.id;const cmd=req.body;assert(typeof cmd.idempotencyKey==='string'&&cmd.idempotencyKey.length>=8&&cmd.idempotencyKey.length<200,'Cần khóa chống gửi lặp');const result=transaction(()=>{const fingerprint=hash(JSON.stringify({type:cmd.type,payload:cmd.payload}));const old=db.prepare('SELECT fingerprint FROM commands WHERE owner_id=? AND key=?').get(owner,cmd.idempotencyKey) as any;if(old){assert(old.fingerprint===fingerprint,'Khóa gửi lặp đã dùng cho dữ liệu khác','CONFLICT');return read(owner)}let state=read(owner);if(cmd.type==='commitImport'){const stored=db.prepare('SELECT data FROM previews WHERE id=? AND owner_id=? AND expires>?').get(cmd.payload.previewId,owner,Date.now()) as any;assert(stored,'Bản xem trước hết hạn hoặc không thuộc tài khoản');const preview=JSON.parse(stored.data);assert(!preview.issues.some((i:any)=>i.severity==='error'),'Còn lỗi nhập dữ liệu cần đối chiếu');assert(!state.imports.some(i=>i.hash===preview.checksum),'Tệp này đã được nhập','DUPLICATE_IMPORT');if(cmd.version!==undefined)assert(cmd.version===state.version,'Dữ liệu đã thay đổi','CONFLICT');for(const prod of preview.products){const existing=state.products.find(x=>x.id===prod.id);if(existing)Object.assign(existing,prod);else state.products.push(prod)}for(const c of preview.customers)if(!state.customers.some(x=>x.id===c.id))state.customers.push(c);for(const o of preview.orders){o.status='draft';o.reserved='0';state.orders.push(o)}state.imports.push({hash:preview.checksum,at:new Date().toISOString()});state.version++;state.audit.push({id:randomUUID(),at:new Date().toISOString(),type:'commitImport',referenceId:preview.checksum,details:preview.filename});state=refresh(state)}else state=execute(state,cmd);write(owner,state);db.prepare('INSERT INTO commands VALUES(?,?,?)').run(owner,cmd.idempotencyKey,fingerprint);return state});res.json(result)}));
-app.post('/api/programs/preview',asyncRoute((req,res)=>res.json(previewPrograms(read(res.locals.user.id),req.body))));
-app.post(['/api/imports/preview','/api/import/preview'],asyncRoute(async(req,res)=>{const {importPreview}=await import('./imports.js');const {filename,kind,base64}=req.body;assert(typeof filename==='string'&&typeof base64==='string','Thiếu tệp');const buffer=Buffer.from(base64,'base64');assert(buffer.length<=10*1024*1024,'Tệp vượt giới hạn 10MB');const preview=await importPreview(buffer,filename,kind,read(res.locals.user.id).products);const previewId=randomUUID();db.prepare('INSERT INTO previews VALUES(?,?,?,?)').run(previewId,res.locals.user.id,JSON.stringify(preview),Date.now()+3600000);res.json({...preview,previewId})}));
-app.post('/api/imports/local-preview',asyncRoute(async(req,res)=>{const names:Record<string,string>={cost:'bang_gia_goc_san_pham_thang_9.xlsx',quotes:'bang_gia_chao_hang.xlsx',orders:'don_hang.txt'};assert(names[req.body.kind],'Loại tài nguyên không hợp lệ');const {readFile}=await import('node:fs/promises');const {importPreview}=await import('./imports.js');const preview=await importPreview(await readFile(path.resolve(names[req.body.kind])),names[req.body.kind],req.body.kind,read(res.locals.user.id).products);const previewId=randomUUID();db.prepare('INSERT INTO previews VALUES(?,?,?,?)').run(previewId,res.locals.user.id,JSON.stringify(preview),Date.now()+3600000);res.json({...preview,previewId})}));
-app.post('/api/demo',asyncRoute((_req,res)=>{const owner=res.locals.user.id;const state=transaction(()=>{let s=read(owner);assert(!s.products.length&&!s.customers.length&&!s.orders.length,'Chỉ nạp mẫu vào tài khoản trống');s=execute(s,{type:'saveProduct',payload:{product:{name:'Nước xả mẫu 20ml',code:'DEMO-NXV',group:'Nước xả',brand:'TrueCare mẫu',variant:'Xanh',unit:'dây',pack:40,cost:'11340',price:'13000',effectiveDate:'2026-09-01'}},idempotencyKey:'demo-product'});s=execute(s,{type:'saveCustomer',payload:{customer:{name:'Cửa hàng minh họa',contact:'Khách mẫu',district:'Khu vực mẫu',route:'Tuyến 1',visitDays:[1,3,5]}},idempotencyKey:'demo-customer'});write(owner,s);return s});res.json(state)}));
-app.use((error:any,_req:express.Request,res:express.Response,_next:express.NextFunction)=>{const known=error instanceof DomainError;res.status(known?(error.code==='CONFLICT'?409:error.status):500).json({error:{code:known?error.code:'SERVER_ERROR',message:known?error.message:'Không thể hoàn tất thao tác. Dữ liệu chưa bị thay đổi.'}})});
-const port=Number(process.env.PORT??3001);app.listen(port,'127.0.0.1',()=>console.log(`TrueCare local development API: http://127.0.0.1:${port} (SQLite, email not configured)`));
+const app = express();
+app.disable("x-powered-by");
+app.use(express.json({ limit: "14mb" }));
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Cache-Control", "no-store");
+  if (req.method !== "GET" && req.headers.origin) {
+    const origin = new URL(req.headers.origin);
+    if (
+      origin.hostname !== "localhost" &&
+      origin.hostname !== "127.0.0.1" &&
+      origin.origin !== process.env.APP_ORIGIN
+    ) {
+      res
+        .status(403)
+        .json({
+          error: { code: "ORIGIN", message: "Nguồn yêu cầu không hợp lệ" },
+        });
+      return;
+    }
+  }
+  next();
+});
+const dir = process.env.TRUECARE_DATA_DIR ?? path.resolve(".local-data");
+mkdirSync(dir, { recursive: true });
+const db = new DatabaseSync(path.join(dir, "truecare.sqlite"));
+db.exec(
+  "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,username TEXT UNIQUE NOT NULL,display_name TEXT NOT NULL,password TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS states(owner_id TEXT PRIMARY KEY REFERENCES users(id),data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS commands(owner_id TEXT NOT NULL,key TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(owner_id,key)); CREATE TABLE IF NOT EXISTS previews(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,data TEXT NOT NULL,expires INTEGER NOT NULL);",
+);
+const hash = (str: string) => createHash("sha256").update(str).digest("hex");
+const passwordHash = (password: string) => {
+  const salt = randomBytes(16).toString("hex");
+  return salt + ":" + scryptSync(password, salt, 64).toString("hex");
+};
+const verify = (password: string, stored: string) => {
+  const [salt, key] = stored.split(":");
+  return timingSafeEqual(
+    scryptSync(password, salt, 64),
+    Buffer.from(key, "hex"),
+  );
+};
+const read = (owner: string): AppState =>
+  refresh(
+    JSON.parse(
+      (db.prepare("SELECT data FROM states WHERE owner_id=?").get(owner) as any)
+        .data,
+    ),
+  );
+const write = (owner: string, s: AppState) =>
+  db
+    .prepare("UPDATE states SET data=? WHERE owner_id=?")
+    .run(JSON.stringify(s), owner);
+const publicUser = (u: any): User => ({
+  id: u.id,
+  email: u.email,
+  username: u.username,
+  displayName: u.display_name,
+  role: "employee",
+  active: true,
+});
+const cookie = (req: express.Request) => {
+  const match = req.headers.cookie?.match(/(?:^|;\s*)tc_session=([^;]+)/);
+  return match ? match[1] : "";
+};
+const getUser = (req: express.Request) =>
+  db
+    .prepare(
+      "SELECT users.* FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token=? AND sessions.expires>?",
+    )
+    .get(hash(cookie(req)), Date.now()) as any;
+const session = (res: express.Response, userId: string) => {
+  const token = randomBytes(32).toString("hex");
+  db.prepare("INSERT INTO sessions VALUES(?,?,?)").run(
+    hash(token),
+    userId,
+    Date.now() + 1000 * 60 * 60 * 24 * 7,
+  );
+  res.cookie("tc_session", token, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 1000 * 60 * 60 * 24 * 7,
+    path: "/",
+  });
+};
+const transaction = <T>(fn: () => T): T => {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = fn();
+    db.exec("COMMIT");
+    return result;
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+};
+const asyncRoute =
+  (fn: express.RequestHandler): express.RequestHandler =>
+  (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+const rates = new Map<string, { count: number; until: number }>();
+app.use("/api/auth", (req, res, next) => {
+  const key = req.ip ?? "local";
+  let r = rates.get(key);
+  if (!r || r.until < Date.now()) {
+    r = { count: 0, until: Date.now() + 60000 };
+    rates.set(key, r);
+  }
+  if (req.method === "POST" && ++r.count > 30) {
+    res
+      .status(429)
+      .json({ error: { code: "RATE_LIMIT", message: "Thử lại sau một phút" } });
+    return;
+  }
+  next();
+});
+app.get("/api/health", (_req, res) =>
+  res.json({ ok: true, mode: "local", productionReady: false }),
+);
+app.get("/api/auth/session", (req, res) => {
+  const user = getUser(req);
+  res.json({ user: user ? publicUser(user) : null, mode: "local" });
+});
+app.post(
+  "/api/auth/register",
+  asyncRoute((req, res) => {
+    const {
+      email,
+      username,
+      password,
+      displayName,
+      companyCode = "TRUECARE",
+    } = req.body;
+    assert(companyCode.toUpperCase() === "TRUECARE", "Mã công ty không hợp lệ");
+    assert(
+      typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),
+      "Email không hợp lệ",
+    );
+    assert(
+      typeof username === "string" && /^[a-zA-Z0-9_.-]{3,40}$/.test(username),
+      "Tên đăng nhập từ 3–40 ký tự",
+    );
+    assert(
+      typeof password === "string" &&
+        password.length >= 10 &&
+        password.length <= 200,
+      "Mật khẩu từ 10 đến 200 ký tự",
+    );
+    const user = {
+      id: randomUUID(),
+      email: email.toLowerCase(),
+      username: username.toLowerCase(),
+      display_name: String(displayName ?? username),
+      password: passwordHash(password),
+    };
+    transaction(() => {
+      assert(
+        !db
+          .prepare("SELECT id FROM users WHERE email=? OR username=?")
+          .get(user.email, user.username),
+        "Không thể đăng ký với thông tin này",
+      );
+      db.prepare("INSERT INTO users VALUES(?,?,?,?,?)").run(
+        user.id,
+        user.email,
+        user.username,
+        user.display_name,
+        user.password,
+      );
+      db.prepare("INSERT INTO states VALUES(?,?)").run(
+        user.id,
+        JSON.stringify(emptyState(user.display_name)),
+      );
+    });
+    session(res, user.id);
+    res.json({
+      user: publicUser(user),
+      mode: "local",
+      message: "Tài khoản phát triển cục bộ; chưa xác minh email.",
+    });
+  }),
+);
+app.post(
+  "/api/auth/login",
+  asyncRoute((req, res) => {
+    const { login, username, email, password, companyCode = "TRUECARE" } =
+      req.body;
+    const identifier = String(login ?? username ?? email ?? "").toLowerCase();
+    assert(
+      identifier &&
+        typeof password === "string" &&
+        password.length <= 200,
+      "Thông tin đăng nhập không hợp lệ",
+    );
+    const user = db
+      .prepare("SELECT * FROM users WHERE username=? OR email=?")
+      .get(identifier, identifier) as any;
+    assert(
+      companyCode.toUpperCase() === "TRUECARE" &&
+        user &&
+        verify(password, user.password),
+      "Thông tin đăng nhập không hợp lệ",
+      "AUTH",
+    );
+    session(res, user.id);
+    res.json({ user: publicUser(user), mode: "local" });
+  }),
+);
+app.post("/api/auth/logout", (req, res) => {
+  db.prepare("DELETE FROM sessions WHERE token=?").run(hash(cookie(req)));
+  res.clearCookie("tc_session", { path: "/" });
+  res.json({ ok: true });
+});
+app.post("/api/auth/forgot-password", (_req, res) =>
+  res
+    .status(501)
+    .json({
+      error: {
+        code: "EMAIL_NOT_CONFIGURED",
+        message:
+          "Bản cục bộ chưa có dịch vụ email. Luồng khôi phục email cần cấu hình Supabase trước khi sử dụng thật.",
+      },
+    }),
+);
+app.use("/api", (req, res, next) => {
+  const user = getUser(req);
+  if (!user) {
+    res
+      .status(401)
+      .json({ error: { code: "AUTH", message: "Vui lòng đăng nhập" } });
+    return;
+  }
+  res.locals.user = user;
+  next();
+});
+app.post(
+  "/api/auth/change-password",
+  asyncRoute((req, res) => {
+    const user = res.locals.user;
+    assert(
+      typeof req.body.oldPassword === "string" &&
+        verify(req.body.oldPassword, user.password),
+      "Mật khẩu hiện tại không đúng",
+    );
+    assert(
+      typeof req.body.newPassword === "string" &&
+        req.body.newPassword.length >= 10 &&
+        req.body.newPassword.length <= 200,
+      "Mật khẩu mới từ 10 đến 200 ký tự",
+    );
+    transaction(() => {
+      db.prepare("UPDATE users SET password=? WHERE id=?").run(
+        passwordHash(req.body.newPassword),
+        user.id,
+      );
+      db.prepare("DELETE FROM sessions WHERE user_id=?").run(user.id);
+    });
+    session(res, user.id);
+    res.json({ ok: true });
+  }),
+);
+app.post("/api/auth/revoke-sessions", (req, res) => {
+  db.prepare("DELETE FROM sessions WHERE user_id=? AND token<>?").run(
+    res.locals.user.id,
+    hash(cookie(req)),
+  );
+  res.json({ ok: true });
+});
+app.get("/api/state", (_req, res) => res.json(read(res.locals.user.id)));
+app.post(
+  "/api/commands",
+  asyncRoute((req, res) => {
+    const owner = res.locals.user.id;
+    const cmd = req.body;
+    assert(
+      typeof cmd.idempotencyKey === "string" &&
+        cmd.idempotencyKey.length >= 8 &&
+        cmd.idempotencyKey.length < 200,
+      "Cần khóa chống gửi lặp",
+    );
+    const result = transaction(() => {
+      const fingerprint = hash(
+        JSON.stringify({ type: cmd.type, payload: cmd.payload }),
+      );
+      const old = db
+        .prepare("SELECT fingerprint FROM commands WHERE owner_id=? AND key=?")
+        .get(owner, cmd.idempotencyKey) as any;
+      if (old) {
+        assert(
+          old.fingerprint === fingerprint,
+          "Khóa gửi lặp đã dùng cho dữ liệu khác",
+          "CONFLICT",
+        );
+        return read(owner);
+      }
+      let state = read(owner);
+      if (cmd.type === "commitImport") {
+        const stored = db
+          .prepare(
+            "SELECT data FROM previews WHERE id=? AND owner_id=? AND expires>?",
+          )
+          .get(cmd.payload.previewId, owner, Date.now()) as any;
+        assert(stored, "Bản xem trước hết hạn hoặc không thuộc tài khoản");
+        const preview = JSON.parse(stored.data);
+        assert(
+          !preview.issues.some((i: any) => i.severity === "error"),
+          "Còn lỗi nhập dữ liệu cần đối chiếu",
+        );
+        assert(
+          !state.imports.some((i) => i.hash === preview.checksum),
+          "Tệp này đã được nhập",
+          "DUPLICATE_IMPORT",
+        );
+        if (cmd.version !== undefined)
+          assert(
+            cmd.version === state.version,
+            "Dữ liệu đã thay đổi",
+            "CONFLICT",
+          );
+        for (const prod of preview.products) {
+          const existing = state.products.find((x) => x.id === prod.id);
+          if (existing) Object.assign(existing, prod);
+          else state.products.push(prod);
+        }
+        for (const c of preview.customers)
+          if (!state.customers.some((x) => x.id === c.id))
+            state.customers.push(c);
+        for (const o of preview.orders) {
+          o.status = "draft";
+          o.reserved = "0";
+          state.orders.push(o);
+        }
+        state.imports.push({
+          hash: preview.checksum,
+          at: new Date().toISOString(),
+        });
+        state.version++;
+        state.audit.push({
+          id: randomUUID(),
+          at: new Date().toISOString(),
+          type: "commitImport",
+          referenceId: preview.checksum,
+          details: preview.filename,
+        });
+        state = refresh(state);
+      } else state = execute(state, cmd);
+      write(owner, state);
+      db.prepare("INSERT INTO commands VALUES(?,?,?)").run(
+        owner,
+        cmd.idempotencyKey,
+        fingerprint,
+      );
+      return state;
+    });
+    res.json(result);
+  }),
+);
+app.post(
+  "/api/programs/preview",
+  asyncRoute((req, res) =>
+    res.json(previewPrograms(read(res.locals.user.id), req.body)),
+  ),
+);
+app.post(
+  ["/api/imports/preview", "/api/import/preview"],
+  asyncRoute(async (req, res) => {
+    const { importPreview } = await import("./imports.js");
+    const { filename, kind, base64 } = req.body;
+    assert(
+      typeof filename === "string" && typeof base64 === "string",
+      "Thiếu tệp",
+    );
+    const buffer = Buffer.from(base64, "base64");
+    assert(buffer.length <= 10 * 1024 * 1024, "Tệp vượt giới hạn 10MB");
+    const preview = await importPreview(
+      buffer,
+      filename,
+      kind,
+      read(res.locals.user.id).products,
+    );
+    const previewId = randomUUID();
+    db.prepare("INSERT INTO previews VALUES(?,?,?,?)").run(
+      previewId,
+      res.locals.user.id,
+      JSON.stringify(preview),
+      Date.now() + 3600000,
+    );
+    res.json({ ...preview, previewId });
+  }),
+);
+app.post(
+  "/api/imports/local-preview",
+  asyncRoute(async (req, res) => {
+    const names: Record<string, string> = {
+      cost: "bang_gia_goc_san_pham_thang_9.xlsx",
+      quotes: "bang_gia_chao_hang.xlsx",
+      orders: "don_hang.txt",
+    };
+    assert(names[req.body.kind], "Loại tài nguyên không hợp lệ");
+    const { readFile } = await import("node:fs/promises");
+    const { importPreview } = await import("./imports.js");
+    const preview = await importPreview(
+      await readFile(path.resolve(names[req.body.kind])),
+      names[req.body.kind],
+      req.body.kind,
+      read(res.locals.user.id).products,
+    );
+    const previewId = randomUUID();
+    db.prepare("INSERT INTO previews VALUES(?,?,?,?)").run(
+      previewId,
+      res.locals.user.id,
+      JSON.stringify(preview),
+      Date.now() + 3600000,
+    );
+    res.json({ ...preview, previewId });
+  }),
+);
+app.post(
+  "/api/demo",
+  asyncRoute((_req, res) => {
+    const owner = res.locals.user.id;
+    const state = transaction(() => {
+      let s = read(owner);
+      assert(
+        !s.products.length && !s.customers.length && !s.orders.length,
+        "Chỉ nạp mẫu vào tài khoản trống",
+      );
+      s = execute(s, {
+        type: "saveProduct",
+        payload: {
+          product: {
+            name: "Nước xả mẫu 20ml",
+            code: "DEMO-NXV",
+            group: "Nước xả",
+            brand: "TrueCare mẫu",
+            variant: "Xanh",
+            unit: "dây",
+            pack: 40,
+            cost: "11340",
+            price: "13000",
+            effectiveDate: "2026-09-01",
+          },
+        },
+        idempotencyKey: "demo-product",
+      });
+      s = execute(s, {
+        type: "saveCustomer",
+        payload: {
+          customer: {
+            name: "Cửa hàng minh họa",
+            contact: "Khách mẫu",
+            district: "Khu vực mẫu",
+            route: "Tuyến 1",
+            visitDays: [1, 3, 5],
+          },
+        },
+        idempotencyKey: "demo-customer",
+      });
+      write(owner, s);
+      return s;
+    });
+    res.json(state);
+  }),
+);
+app.use(
+  (
+    error: any,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    const known = error instanceof DomainError;
+    res
+      .status(known ? (error.code === "CONFLICT" ? 409 : error.status) : 500)
+      .json({
+        error: {
+          code: known ? error.code : "SERVER_ERROR",
+          message: known
+            ? error.message
+            : "Không thể hoàn tất thao tác. Dữ liệu chưa bị thay đổi.",
+        },
+      });
+  },
+);
+const port = Number(process.env.PORT ?? 3001);
+app.listen(port, "127.0.0.1", () =>
+  console.log(
+    `TrueCare local development API: http://127.0.0.1:${port} (SQLite, email not configured)`,
+  ),
+);
