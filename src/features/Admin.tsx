@@ -3,6 +3,7 @@ import {
   Download,
   KeyRound,
   LockKeyhole,
+  LogOut,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -126,6 +127,20 @@ export function AdminConsole() {
       notify(member.active ? "Đã khóa tài khoản." : "Đã mở lại tài khoản.");
     } catch (e) {
       notify((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const revokeSessions = async (member: TeamMember) => {
+    try {
+      reason();
+      setBusy(true);
+      await request(`/api/admin/users/${member.id}/revoke-sessions`, {
+        reason: adminReason,
+      });
+      notify(`Đã thu hồi mọi phiên đăng nhập của ${member.displayName}.`);
+    } catch (error) {
+      notify((error as Error).message);
     } finally {
       setBusy(false);
     }
@@ -316,6 +331,13 @@ export function AdminConsole() {
                         <Button onClick={() => setReset(member)}>
                           <KeyRound size={15} />
                           Reset
+                        </Button>
+                        <Button
+                          title="Đăng xuất tài khoản này khỏi mọi thiết bị"
+                          onClick={() => void revokeSessions(member)}
+                        >
+                          <LogOut size={15} />
+                          Thu hồi phiên
                         </Button>
                         <Button
                           variant="danger"

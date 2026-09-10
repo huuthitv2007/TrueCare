@@ -9,6 +9,7 @@ import {
   normalizeEmail,
   normalizeUsername,
   requireAdmin,
+  sessionIsCurrent,
   validateEmployeePassword,
   type AccountRow,
 } from "./accounts.js";
@@ -46,7 +47,7 @@ const previews = new Map<
 >();
 type Session = { token: string; user: User; account: AccountRow };
 const accountFields =
-  "user_id,email,username,display_name,role,active,created_at,updated_at";
+  "user_id,email,username,display_name,role,active,created_at,updated_at,session_valid_after";
 app.disable("x-powered-by");
 app.use(express.json({ limit: "14mb" }));
 app.use((req, res, next) => {
@@ -89,6 +90,7 @@ const asAccount = (row: any): AccountRow => ({
   active: !!row.active,
   created_at: row.created_at,
   updated_at: row.updated_at,
+  session_valid_after: row.session_valid_after,
 });
 const accountOf = async (userId: string) => {
   const { data, error } = await admin
@@ -114,7 +116,31 @@ const userOf = async (req: express.Request): Promise<Session> => {
   const account = await accountOf(data.user.id);
   if (!account.active)
     throw new DomainError("AUTH", "Tài khoản đã bị khóa", 403);
+  let issuedAt = 0;
+  try {
+    issuedAt = Number(
+      JSON.parse(
+        Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"),
+      ).iat,
+    );
+  } catch {}
+  if (!sessionIsCurrent(account, issuedAt))
+    throw new DomainError("AUTH", "Phiên đăng nhập đã được thu hồi", 401);
   return { token, user: accountUser(account), account };
+};
+const revokeSessions = async (userId: string) => {
+  // Subtract one second so a login issued in the same clock second remains valid.
+  const sessionValidAfter = new Date(Date.now() - 1000).toISOString();
+  const { error } = await admin
+    .from("employee_accounts")
+    .update({
+      session_valid_after: sessionValidAfter,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId);
+  if (error)
+    throw new DomainError("STORAGE", "Không thể thu hồi phiên đăng nhập", 503);
+  return sessionValidAfter;
 };
 const logAdmin = async (
   actor: string,
@@ -354,6 +380,15 @@ app.post("/api/auth/logout", (_req, res) => {
   res.clearCookie("tc_session", { path: "/" });
   res.json({ ok: true });
 });
+app.post(
+  "/api/auth/logout-all",
+  route(async (req, res) => {
+    const session = await userOf(req);
+    await revokeSessions(session.user.id);
+    res.clearCookie("tc_session", { path: "/" });
+    res.json({ ok: true });
+  }),
+);
 app.post(
   "/api/auth/forgot-password",
   route(async (req, res) => {
@@ -645,6 +680,21 @@ app.post(
       reason,
       {},
     );
+    res.json({ ok: true });
+  }),
+);
+app.post(
+  "/api/admin/users/:userId/revoke-sessions",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const target = await accountOf(String(req.params.userId));
+    const reason = reasonOf(req.body.reason);
+    const sessionValidAfter = await revokeSessions(target.user_id);
+    await logAdmin(session.user.id, target.user_id, "revoke_sessions", reason, {
+      sessionValidAfter,
+    });
+    if (target.user_id === session.user.id)
+      res.clearCookie("tc_session", { path: "/" });
     res.json({ ok: true });
   }),
 );
