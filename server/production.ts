@@ -23,6 +23,15 @@ import type {
 } from "../shared/types.js";
 import { reportRows, reportTotals } from "../src/lib/reporting.js";
 import { applyImport, authorizeImport } from "./import-service.js";
+import {
+  catalogUsage,
+  customerUsage,
+  dashboardOf,
+  duplicateCustomers,
+  pageOf,
+  productUsage,
+  type OwnedState,
+} from "./admin-domain.js";
 
 const url = process.env.SUPABASE_URL,
   serviceKey =
@@ -34,6 +43,31 @@ if (!url || !serviceKey || !anonKey)
     "SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY and SUPABASE_SECRET_KEY are required in production.",
   );
 const app = express();
+app.set("trust proxy", 1);
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const adminRequests = new Map<string, { count: number; resetAt: number }>();
+const assertLoginRate = (key: string) => {
+  const now = Date.now();
+  const current = loginAttempts.get(key);
+  if (!current || current.resetAt <= now) {
+    loginAttempts.set(key, { count: 0, resetAt: now + 15 * 60_000 });
+    return;
+  }
+  if (current.count >= 8)
+    throw new DomainError(
+      "RATE_LIMIT",
+      "Đăng nhập sai quá nhiều lần. Vui lòng thử lại sau 15 phút.",
+      429,
+    );
+};
+const failedLogin = (key: string) => {
+  const current = loginAttempts.get(key) ?? {
+    count: 0,
+    resetAt: Date.now() + 15 * 60_000,
+  };
+  current.count += 1;
+  loginAttempts.set(key, current);
+};
 const admin = createClient(url, serviceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -43,11 +77,11 @@ const auth = createClient(url, anonKey, {
 const store = createSupabaseAdapter(url, serviceKey);
 const previews = new Map<
   string,
-  { owner: string; data: any; expires: number }
+  { owner: string; data: any; expires: number; jobId?: string }
 >();
 type Session = { token: string; user: User; account: AccountRow };
 const accountFields =
-  "user_id,email,username,display_name,role,active,created_at,updated_at,session_valid_after";
+  "user_id,email,username,display_name,role,active,created_at,updated_at,session_valid_after,last_login_at";
 app.disable("x-powered-by");
 app.use(express.json({ limit: "14mb" }));
 app.use((req, res, next) => {
@@ -91,6 +125,7 @@ const asAccount = (row: any): AccountRow => ({
   created_at: row.created_at,
   updated_at: row.updated_at,
   session_valid_after: row.session_valid_after,
+  last_login_at: row.last_login_at,
 });
 const accountOf = async (userId: string) => {
   const { data, error } = await admin
@@ -148,6 +183,13 @@ const logAdmin = async (
   action: string,
   reason: string,
   details: Record<string, unknown> = {},
+  meta: {
+    requestId?: string;
+    objectType?: string;
+    objectId?: string;
+    before?: unknown;
+    after?: unknown;
+  } = {},
 ) => {
   const { error } = await admin.from("admin_audit_logs").insert({
     id: randomUUID(),
@@ -156,6 +198,11 @@ const logAdmin = async (
     action,
     reason,
     details,
+    request_id: meta.requestId,
+    object_type: meta.objectType,
+    object_id: meta.objectId,
+    before_data: meta.before,
+    after_data: meta.after,
   });
   if (error)
     throw new DomainError("STORAGE", "Không thể ghi nhật ký quản trị", 503);
@@ -177,6 +224,7 @@ const employeeAccount = (row: AccountRow): EmployeeAccount => ({
   active: row.active,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
+  lastLoginAt: row.last_login_at ?? null,
 });
 async function resolveLogin(value: unknown) {
   const login = String(value ?? "")
@@ -296,6 +344,53 @@ async function team(from?: string, to?: string) {
   }
   return members;
 }
+
+async function ownedStates(): Promise<OwnedState[]> {
+  const { data, error } = await admin
+    .from("employee_accounts")
+    .select("user_id,display_name")
+    .order("created_at");
+  if (error)
+    throw new DomainError("STORAGE", "Không tải được dữ liệu toàn hệ thống", 503);
+  const states: OwnedState[] = [];
+  for (const account of data ?? []) {
+    states.push({
+      ownerId: account.user_id,
+      ownerName: account.display_name,
+      state: await store.getStateForOwner(account.user_id),
+    });
+  }
+  return states;
+}
+
+function pageQuery(req: express.Request) {
+  return {
+    page: Number(req.query.page ?? 1),
+    pageSize: Number(req.query.pageSize ?? 25),
+  };
+}
+
+async function executeAdminCommand(
+  ownerId: string,
+  actor: User,
+  type: string,
+  payload: Record<string, unknown>,
+  idempotencyKey?: string,
+) {
+  const state = await store.getStateForOwner(ownerId);
+  return store.executeForOwner(
+    ownerId,
+    {
+      type,
+      payload,
+      idempotencyKey: idempotencyKey || randomUUID(),
+      version: state.version,
+      sharedVersion: state.sharedVersion,
+      inventoryVersion: state.inventoryVersion,
+    },
+    { id: actor.id, role: "admin" },
+  );
+}
 async function commitImport(
   owner: string,
   command: Command,
@@ -311,9 +406,18 @@ async function commitImport(
     id: actor.id,
     role: actor.role,
   });
-  return store.commitStateForOwner(owner, command, next, state);
+  const committed = await store.commitStateForOwner(owner, command, next, state, {
+    id: actor.id,
+    role: actor.role,
+  });
+  if (preview.jobId)
+    await admin
+      .from("admin_import_jobs")
+      .update({ status: "committed", updated_at: new Date().toISOString() })
+      .eq("id", preview.jobId);
+  return committed;
 }
-async function createImportPreview(owner: string, input: any) {
+async function createImportPreview(owner: string, input: any, actorId = owner) {
   const { importPreview } = await import("./imports.js");
   const { filename, kind, base64 } = input;
   assert(
@@ -323,10 +427,39 @@ async function createImportPreview(owner: string, input: any) {
   const buffer = Buffer.from(base64, "base64");
   assert(buffer.length <= 10 * 1024 * 1024, "Tệp vượt giới hạn 10MB");
   const state = await store.getStateForOwner(owner);
-  const data = await importPreview(buffer, filename, kind, state.products);
-  const previewId = randomUUID();
-  previews.set(previewId, { owner, data, expires: Date.now() + 3600000 });
-  return { ...data, previewId };
+  try {
+    const data = await importPreview(buffer, filename, kind, state.products);
+    const previewId = randomUUID();
+    const job = await admin
+      .from("admin_import_jobs")
+      .insert({
+        owner_id: owner,
+        actor_id: actorId,
+        filename,
+        kind,
+        status: "previewed",
+        summary: data.summary,
+      })
+      .select("id")
+      .single();
+    previews.set(previewId, {
+      owner,
+      data,
+      expires: Date.now() + 3600000,
+      jobId: job.data?.id,
+    });
+    return { ...data, previewId };
+  } catch (error) {
+    await admin.from("admin_import_jobs").insert({
+      owner_id: owner,
+      actor_id: actorId,
+      filename,
+      kind,
+      status: "failed",
+      error_message: error instanceof Error ? error.message.slice(0, 1000) : "Lỗi đọc tệp",
+    });
+    throw error;
+  }
 }
 
 app.get("/api/health", (_req, res) =>
@@ -365,13 +498,31 @@ app.post(
       "Thông tin đăng nhập không hợp lệ",
       "AUTH",
     );
-    const account = await resolveLogin(login ?? username ?? email);
+    const loginValue = String(login ?? username ?? email ?? "")
+      .trim()
+      .toLowerCase();
+    const rateKey = `${req.ip}:${loginValue}`;
+    assertLoginRate(rateKey);
+    let account: AccountRow;
+    try {
+      account = await resolveLogin(loginValue);
+    } catch (error) {
+      failedLogin(rateKey);
+      throw error;
+    }
     const signed = await auth.auth.signInWithPassword({
       email: account.email,
       password,
     });
-    if (signed.error || !signed.data.session)
+    if (signed.error || !signed.data.session) {
+      failedLogin(rateKey);
       throw new DomainError("AUTH", "Thông tin đăng nhập không hợp lệ", 401);
+    }
+    loginAttempts.delete(rateKey);
+    await admin
+      .from("employee_accounts")
+      .update({ last_login_at: new Date().toISOString() })
+      .eq("user_id", account.user_id);
     setSession(res, signed.data.session.access_token);
     res.json({ user: accountUser(account), mode: "supabase" });
   }),
@@ -504,8 +655,477 @@ app.post("/api/imports/local-preview", (_req, res) =>
 app.use(
   "/api/admin",
   route(async (req, res, next) => {
-    requireAdmin((res.locals.session as Session).user);
+    const user = (res.locals.session as Session).user;
+    requireAdmin(user);
+    const now = Date.now(), current = adminRequests.get(user.id);
+    const bucket = !current || current.resetAt <= now
+      ? { count: 0, resetAt: now + 60_000 }
+      : current;
+    bucket.count += 1;
+    adminRequests.set(user.id, bucket);
+    if (bucket.count > 180)
+      throw new DomainError("RATE_LIMIT", "Thao tác quản trị quá nhanh. Vui lòng thử lại sau một phút.", 429);
     next();
+  }),
+);
+app.get(
+  "/api/admin/dashboard",
+  route(async (_req, res) => {
+    const states = await ownedStates();
+    const products = states[0]?.state.products ?? [];
+    res.json({
+      summary: dashboardOf(states, products),
+      team: await team(),
+      alerts: {
+        negativeFunds: states
+          .filter((x) => Number(x.state.summary.available) < 0)
+          .map((x) => ({ ownerId: x.ownerId, ownerName: x.ownerName, amount: x.state.summary.available })),
+        lowStock: (states[0]?.state.inventory ?? [])
+          .filter((x) => x.tracked && x.quantity <= 12)
+          .map((x) => ({ ...x, product: products.find((p) => p.id === x.productId)?.name ?? x.productId })),
+        partialOrders: states.flatMap((x) =>
+          x.state.orders
+            .filter((order) => !order.deletedAt && order.status === "partial")
+            .map((order) => ({ ownerId: x.ownerId, ownerName: x.ownerName, order }))),
+      },
+    });
+  }),
+);
+
+app.get(
+  "/api/admin/customers",
+  route(async (req, res) => {
+    const states = await ownedStates();
+    const customers = states[0]?.state.customers ?? [];
+    const q = String(req.query.q ?? "").trim().toLocaleLowerCase("vi");
+    const status = String(req.query.status ?? "active");
+    const district = String(req.query.district ?? "");
+    const filtered = customers
+      .filter((customer) => {
+        const currentStatus = customer.mergedInto
+          ? "merged"
+          : customer.deletedAt
+            ? "deleted"
+            : customer.archived
+              ? "archived"
+              : "active";
+        return (
+          (status === "all" || currentStatus === status) &&
+          (!district || customer.district === district) &&
+          (!q ||
+            [customer.name, customer.phone, customer.address, customer.route]
+              .join(" ")
+              .toLocaleLowerCase("vi")
+              .includes(q))
+        );
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "vi"))
+      .map((customer) => ({ ...customer, usage: customerUsage(states, customer.id) }));
+    res.json({ ...pageOf(filtered, pageQuery(req).page, pageQuery(req).pageSize), duplicateGroups: duplicateCustomers(customers).length });
+  }),
+);
+
+app.post(
+  "/api/admin/customers",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const reason = reasonOf(req.body.reason);
+    const before = await store.getStateForOwner(session.user.id);
+    const next = await executeAdminCommand(
+      session.user.id,
+      session.user,
+      "saveCustomer",
+      { customer: req.body.customer, reason },
+      req.header("x-idempotency-key") ?? undefined,
+    );
+    const created = next.customers.find((x) => !before.customers.some((old) => old.id === x.id));
+    await logAdmin(session.user.id, null, "create_customer", reason, {}, {
+      requestId: req.header("x-idempotency-key") ?? undefined,
+      objectType: "customer",
+      objectId: created?.id,
+      after: created,
+    });
+    res.status(201).json({ customer: created, state: next });
+  }),
+);
+
+app.patch(
+  "/api/admin/customers/:id",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const reason = reasonOf(req.body.reason);
+    const state = await store.getStateForOwner(session.user.id);
+    const before = state.customers.find((x) => x.id === req.params.id);
+    assert(before, "Không tìm thấy khách hàng");
+    const next = await executeAdminCommand(
+      session.user.id,
+      session.user,
+      "saveCustomer",
+      { customer: { ...before, ...req.body.customer, id: before.id }, reason },
+      req.header("x-idempotency-key") ?? undefined,
+    );
+    const after = next.customers.find((x) => x.id === before.id);
+    await logAdmin(session.user.id, null, "update_customer", reason, {}, {
+      requestId: req.header("x-idempotency-key") ?? undefined,
+      objectType: "customer",
+      objectId: before.id,
+      before,
+      after,
+    });
+    res.json({ customer: after });
+  }),
+);
+
+app.delete(
+  "/api/admin/customers/:id",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const reason = reasonOf(req.body.reason);
+    const next = await executeAdminCommand(
+      session.user.id,
+      session.user,
+      "deleteCustomer",
+      { id: String(req.params.id), reason },
+      req.header("x-idempotency-key") ?? undefined,
+    );
+    await logAdmin(session.user.id, null, "delete_customer", reason, {}, {
+      requestId: req.header("x-idempotency-key") ?? undefined,
+      objectType: "customer",
+      objectId: String(req.params.id),
+    });
+    res.json({ customer: next.customers.find((x) => x.id === String(req.params.id)) });
+  }),
+);
+
+app.post(
+  "/api/admin/customers/:id/restore",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const reason = reasonOf(req.body.reason);
+    const next = await executeAdminCommand(session.user.id, session.user, "restoreCustomer", {
+      id: String(req.params.id),
+      reason,
+    }, req.header("x-idempotency-key") ?? undefined);
+    await logAdmin(session.user.id, null, "restore_customer", reason, {}, {
+      objectType: "customer",
+      objectId: String(req.params.id),
+    });
+    res.json({ customer: next.customers.find((x) => x.id === String(req.params.id)) });
+  }),
+);
+
+app.delete(
+  "/api/admin/customers/:id/purge",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const reason = reasonOf(req.body.reason);
+    const states = await ownedStates();
+    const usage = customerUsage(states, String(req.params.id));
+    assert(usage.orders === 0 && usage.visits === 0, "Khách hàng còn lịch sử nên chỉ có thể lưu trong thùng rác", "CUSTOMER_HAS_HISTORY");
+    await executeAdminCommand(session.user.id, session.user, "purgeCustomer", {
+      id: String(req.params.id),
+      reason,
+    }, req.header("x-idempotency-key") ?? undefined);
+    await logAdmin(session.user.id, null, "purge_customer", reason, { usage }, {
+      objectType: "customer",
+      objectId: String(req.params.id),
+    });
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  "/api/admin/customers/:id/merge",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const reason = reasonOf(req.body.reason);
+    const targetId = String(req.body.targetId ?? "");
+    assert(targetId && targetId !== req.params.id, "Khách nhận dữ liệu không hợp lệ");
+    const requestId = req.header("x-idempotency-key") || randomUUID();
+    const result = await admin.rpc("admin_merge_customer", {
+      p_source: String(req.params.id),
+      p_target: targetId,
+      p_actor: session.user.id,
+      p_reason: reason,
+      p_request_id: requestId,
+    });
+    if (result.error)
+      throw new DomainError("STORAGE", "Không thể gộp khách hàng: " + result.error.message, 409);
+    await logAdmin(session.user.id, null, "merge_customer", reason, { targetId }, {
+      requestId,
+      objectType: "customer",
+      objectId: String(req.params.id),
+    });
+    res.json({ ok: true, targetId });
+  }),
+);
+
+app.get(
+  "/api/admin/orders",
+  route(async (req, res) => {
+    const states = await ownedStates();
+    const q = String(req.query.q ?? "").toLocaleLowerCase("vi");
+    const status = String(req.query.status ?? "all");
+    const ownerId = String(req.query.ownerId ?? "");
+    const from = String(req.query.from ?? "");
+    const to = String(req.query.to ?? "");
+    const rows = states
+      .filter((owned) => !ownerId || owned.ownerId === ownerId)
+      .flatMap((owned) =>
+        owned.state.orders.map((order) => ({
+          ...order,
+          ownerId: owned.ownerId,
+          ownerName: owned.ownerName,
+          customerName: owned.state.customers.find((x) => x.id === order.customerId)?.name ?? "Khách đã xoá",
+        })),
+      )
+      .filter((order) =>
+        (status === "all" || (status === "trash" ? !!order.deletedAt && !order.purgedAt : order.status === status)) &&
+        (!from || order.date >= from) && (!to || order.date <= to) &&
+        (!q || [order.code, order.customerName, order.ownerName].join(" ").toLocaleLowerCase("vi").includes(q)),
+      )
+      .sort((a, b) => b.date.localeCompare(a.date) || b.code.localeCompare(a.code));
+    res.json(pageOf(rows, pageQuery(req).page, pageQuery(req).pageSize));
+  }),
+);
+
+app.get(
+  "/api/admin/products",
+  route(async (req, res) => {
+    const states = await ownedStates();
+    const products = states[0]?.state.products ?? [];
+    const normalized = await admin.from("products").select("id,data");
+    if (normalized.error)
+      throw new DomainError("STORAGE", "Không tải được bảng giá quản trị", 503);
+    const pending = new Map((normalized.data ?? []).map((row) => [row.id, row.data]));
+    const q = String(req.query.q ?? "").toLocaleLowerCase("vi");
+    const status = String(req.query.status ?? "active");
+    const rows = products
+      .filter((product) =>
+        (status === "all" || (status === "archived") === !!product.archived) &&
+        (!q || [product.code, product.name, product.brand, product.group].join(" ").toLocaleLowerCase("vi").includes(q)),
+      )
+      .map((product) => ({
+        ...product,
+        scheduled:
+          pending.get(product.id)?.effectiveDate > new Date().toISOString().slice(0, 10)
+            ? pending.get(product.id)
+            : null,
+        usage: productUsage(states, product.id),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+    res.json(pageOf(rows, pageQuery(req).page, pageQuery(req).pageSize));
+  }),
+);
+
+app.post(
+  "/api/admin/orders/:ownerId/:id/restore",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const reason = reasonOf(req.body.reason);
+    const ownerId = String(req.params.ownerId), orderId = String(req.params.id);
+    const next = await executeAdminCommand(ownerId, session.user, "restoreOrder", { id: orderId, reason }, req.header("x-idempotency-key") ?? undefined);
+    await logAdmin(session.user.id, ownerId, "restore_order", reason, {}, { objectType: "order", objectId: orderId });
+    res.json({ order: next.orders.find((x) => x.id === orderId) });
+  }),
+);
+
+app.delete(
+  "/api/admin/orders/:ownerId/:id/purge",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const reason = reasonOf(req.body.reason);
+    const ownerId = String(req.params.ownerId), orderId = String(req.params.id);
+    await executeAdminCommand(ownerId, session.user, "purgeOrder", { id: orderId, reason }, req.header("x-idempotency-key") ?? undefined);
+    await logAdmin(session.user.id, ownerId, "purge_order", reason, {}, { objectType: "order", objectId: orderId });
+    res.json({ ok: true });
+  }),
+);
+
+app.get(
+  "/api/admin/products/:id/prices",
+  route(async (req, res) => {
+    const { data, error } = await admin
+      .from("product_prices")
+      .select("id,cost,quote_price,pack,effective_date,changed_by,reason,created_at")
+      .eq("product_id", req.params.id)
+      .order("effective_date", { ascending: false })
+      .order("created_at", { ascending: false });
+    if (error) throw new DomainError("STORAGE", "Không tải được lịch sử giá", 503);
+    res.json({ entries: data ?? [] });
+  }),
+);
+
+app.put(
+  "/api/admin/catalogs/:kind",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const reason = reasonOf(req.body.reason);
+    const state = await store.getStateForOwner(session.user.id);
+    const kind = String(req.params.kind);
+    assert(kind in (state.catalogs ?? {}), "Danh mục không hợp lệ");
+    const before = (state.catalogs as any)[kind];
+    assert(Array.isArray(req.body.values), "Danh mục không hợp lệ");
+    const values = [...new Set(req.body.values.map((x: unknown) => String(x).trim()).filter(Boolean))];
+    const states = await ownedStates();
+    const removed = (before as string[]).filter((value) => !values.includes(value));
+    const inUse = removed.filter(
+      (value) =>
+        catalogUsage(states, state.products, state.customers, kind, value) > 0,
+    );
+    assert(
+      inUse.length === 0,
+      `Không thể xoá mục đang được sử dụng: ${inUse.join(", ")}`,
+      "CATALOG_IN_USE",
+    );
+    const next = await executeAdminCommand(session.user.id, session.user, "saveCatalog", {
+      [kind]: values,
+      reason,
+    }, req.header("x-idempotency-key") ?? undefined);
+    await logAdmin(session.user.id, null, "update_catalog", reason, { kind }, {
+      objectType: "catalog",
+      objectId: kind,
+      before,
+      after: (next.catalogs as any)?.[kind],
+    });
+    res.json({ values: (next.catalogs as any)?.[kind] });
+  }),
+);
+
+app.get(
+  "/api/admin/catalogs",
+  route(async (_req, res) => {
+    const states = await ownedStates();
+    const state = states[0]?.state;
+    const catalogs = state?.catalogs ?? {};
+    const entries = Object.entries(catalogs).flatMap(([kind, values]) =>
+      (values as string[]).map((value, position) => ({
+        id: `${kind}:${position}`,
+        kind,
+        value,
+        position,
+        usage: catalogUsage(states, state?.products ?? [], state?.customers ?? [], kind, value),
+      })),
+    );
+    res.json({ catalogs, entries });
+  }),
+);
+
+app.post(
+  "/api/admin/catalogs/:kind/rename",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const reason = reasonOf(req.body.reason);
+    const kind = String(req.params.kind);
+    const oldValue = String(req.body.oldValue ?? "");
+    const newValue = String(req.body.newValue ?? "");
+    const next = await executeAdminCommand(session.user.id, session.user, "renameCatalog", {
+      kind,
+      oldValue,
+      newValue,
+      reason,
+    }, req.header("x-idempotency-key") ?? undefined);
+    await logAdmin(session.user.id, null, "rename_catalog", reason, { oldValue, newValue }, {
+      objectType: "catalog",
+      objectId: kind,
+    });
+    res.json({ values: (next.catalogs as any)?.[kind] });
+  }),
+);
+
+app.get(
+  "/api/admin/inventory",
+  route(async (req, res) => {
+    const states = await ownedStates();
+    const state = states[0]?.state;
+    const q = String(req.query.q ?? "").toLocaleLowerCase("vi");
+    const products = state?.products ?? [];
+    const balances = (state?.inventory ?? [])
+      .map((balance) => ({ ...balance, product: products.find((x) => x.id === balance.productId) }))
+      .filter((x) => !q || [x.product?.code, x.product?.name].join(" ").toLocaleLowerCase("vi").includes(q));
+    const movements = await admin
+      .from("inventory_movements")
+      .select("id,owner_id,product_id,movement_date,quantity,reason,reference_id,created_at")
+      .order("movement_date", { ascending: false })
+      .limit(500);
+    if (movements.error) throw new DomainError("STORAGE", "Không tải được lịch sử kho", 503);
+    res.json({ balances, movements: movements.data ?? [], version: state?.inventoryVersion ?? 0 });
+  }),
+);
+
+app.post(
+  "/api/admin/inventory/adjust",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const reason = reasonOf(req.body.reason);
+    const next = await executeAdminCommand(session.user.id, session.user, "adjustInventory", {
+      productId: req.body.productId,
+      mode: req.body.mode,
+      quantity: Number(req.body.quantity),
+      tracked: req.body.tracked !== false,
+      reason,
+    }, req.header("x-idempotency-key") ?? undefined);
+    await logAdmin(session.user.id, null, "adjust_company_inventory", reason, {
+      productId: req.body.productId,
+      mode: req.body.mode,
+      quantity: Number(req.body.quantity),
+    }, { objectType: "inventory", objectId: req.body.productId });
+    res.json({ inventory: next.inventory });
+  }),
+);
+
+app.get(
+  "/api/admin/funds",
+  route(async (req, res) => {
+    const states = await ownedStates();
+    const ownerId = String(req.query.ownerId ?? "");
+    const rows = states
+      .filter((x) => !ownerId || x.ownerId === ownerId)
+      .flatMap((owned) => owned.state.ledger.map((entry) => ({ ...entry, ownerId: owned.ownerId, ownerName: owned.ownerName })))
+      .sort((a, b) => b.date.localeCompare(a.date));
+    res.json(pageOf(rows, pageQuery(req).page, pageQuery(req).pageSize));
+  }),
+);
+
+app.get(
+  "/api/admin/programs",
+  route(async (req, res) => {
+    const states = await ownedStates();
+    const status = String(req.query.status ?? "all");
+    const rows = states
+      .flatMap((owned) => owned.state.programs.map((program) => ({ ...program, ownerId: owned.ownerId, ownerName: owned.ownerName })))
+      .filter((program) => status === "all" || program.status === status)
+      .sort((a, b) => b.expiresAt.localeCompare(a.expiresAt));
+    res.json(pageOf(rows, pageQuery(req).page, pageQuery(req).pageSize));
+  }),
+);
+
+app.get(
+  "/api/admin/imports",
+  route(async (req, res) => {
+    const { data, error, count } = await admin
+      .from("admin_import_jobs")
+      .select("id,owner_id,actor_id,filename,kind,status,summary,error_message,created_at,updated_at", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range((pageQuery(req).page - 1) * pageQuery(req).pageSize, pageQuery(req).page * pageQuery(req).pageSize - 1);
+    if (error) throw new DomainError("STORAGE", "Không tải được lịch sử nhập dữ liệu", 503);
+    res.json({ items: data ?? [], total: count ?? 0, ...pageQuery(req) });
+  }),
+);
+
+app.get(
+  "/api/admin/system/health",
+  route(async (_req, res) => {
+    const started = Date.now();
+    const probe = await admin.from("employee_accounts").select("user_id", { count: "exact", head: true });
+    res.json({
+      api: "ok",
+      database: probe.error ? "error" : "ok",
+      latencyMs: Date.now() - started,
+      deployment: process.env.RENDER_GIT_COMMIT?.slice(0, 12) || "local",
+      runtime: process.version,
+      registration: "disabled",
+    });
   }),
 );
 app.get(
@@ -583,8 +1203,9 @@ app.post(
 app.post(
   "/api/admin/workspaces/:userId/imports/preview",
   route(async (req, res) => {
+    const session = res.locals.session as Session;
     const target = await accountOf(String(req.params.userId));
-    res.json(await createImportPreview(target.user_id, req.body));
+    res.json(await createImportPreview(target.user_id, req.body, session.user.id));
   }),
 );
 app.post(
@@ -617,6 +1238,8 @@ app.patch(
       req.body.displayName === undefined
         ? target.display_name
         : String(req.body.displayName).trim();
+    const email =
+      req.body.email === undefined ? target.email : normalizeEmail(req.body.email);
     assert(
       displayName && displayName.length <= 120,
       "Tên hiển thị không hợp lệ",
@@ -625,10 +1248,19 @@ app.patch(
       req.body.active === undefined ? target.active : !!req.body.active;
     if (target.user_id === session.user.id)
       assert(active, "Không thể tự khóa tài khoản quản trị");
+    if (target.role === "admin" && !active) {
+      const activeAdmins = await admin
+        .from("employee_accounts")
+        .select("user_id", { count: "exact", head: true })
+        .eq("role", "admin")
+        .eq("active", true);
+      assert((activeAdmins.count ?? 0) > 1, "Không thể khóa quản trị viên cuối cùng");
+    }
     const { error } = await admin
       .from("employee_accounts")
       .update({
         username,
+        email,
         display_name: displayName,
         active,
         updated_at: new Date().toISOString(),
@@ -643,20 +1275,34 @@ app.patch(
         400,
       );
     const authUpdate = await admin.auth.admin.updateUserById(target.user_id, {
+      email,
+      email_confirm: true,
       user_metadata: { username, displayName },
       ban_duration: active ? "none" : "876000h",
     });
-    if (authUpdate.error)
+    if (authUpdate.error) {
+      await admin
+        .from("employee_accounts")
+        .update({
+          username: target.username,
+          email: target.email,
+          display_name: target.display_name,
+          active: target.active,
+          updated_at: target.updated_at,
+        })
+        .eq("user_id", target.user_id);
       throw new DomainError(
         "AUTH",
         "Không cập nhật được trạng thái Supabase",
         503,
       );
+    }
     const updated = await accountOf(target.user_id);
     await logAdmin(session.user.id, target.user_id, "update_employee", reason, {
       username,
       displayName,
       active,
+      email,
     });
     res.json({ account: employeeAccount(updated) });
   }),
@@ -707,6 +1353,14 @@ app.delete(
       target.user_id !== session.user.id,
       "Không thể tự xóa tài khoản quản trị",
     );
+    if (target.role === "admin") {
+      const activeAdmins = await admin
+        .from("employee_accounts")
+        .select("user_id", { count: "exact", head: true })
+        .eq("role", "admin")
+        .eq("active", true);
+      assert((activeAdmins.count ?? 0) > 1, "Không thể xóa quản trị viên cuối cùng");
+    }
     const reason = reasonOf(req.body.reason);
     const state = await store.getStateForOwner(target.user_id);
     const hasHistory =
@@ -737,18 +1391,7 @@ app.post(
   route(async (req, res) => {
     const session = res.locals.session as Session;
     const reason = reasonOf(req.body.reason);
-    const rawIds: unknown[] = Array.isArray(req.body.userIds)
-      ? (req.body.userIds as unknown[])
-      : [];
-    const userIds: string[] = [
-      ...new Set(rawIds.filter((x): x is string => typeof x === "string")),
-    ];
-    assert(
-      userIds.length > 0 && userIds.length <= 100,
-      "Chọn từ 1 đến 100 nhân viên",
-    );
-    const target = await accountOf(userIds[0]);
-    const state = await store.getStateForOwner(target.user_id);
+    const state = await store.getStateForOwner(session.user.id);
     const match = req.body.match ?? {};
     const products = state.products.filter(
       (product) =>
@@ -767,43 +1410,54 @@ app.post(
       "Chưa có thay đổi bảng giá",
     );
     const product = { ...products[0], ...patch };
-    const next = await store.executeForOwner(
-      target.user_id,
-      {
-        type: "saveProduct",
-        payload: { product },
-        idempotencyKey: randomUUID(),
-        version: state.version,
-        sharedVersion: state.sharedVersion,
-      },
-      { id: session.user.id, role: "admin" },
+    const next = await executeAdminCommand(
+      session.user.id,
+      session.user,
+      "saveProduct",
+      { product, reason },
+      req.header("x-idempotency-key") ?? undefined,
     );
     await logAdmin(session.user.id, null, "shared_catalog_price", reason, {
       productId: product.id,
       code: product.code,
       patch,
-      userIds,
-    });
-    res.json({
-      results: userIds.map((userId) => ({
-        userId,
-        version: next.sharedVersion,
-      })),
-    });
+      scope: "company",
+    }, { objectType: "product", objectId: product.id, before: products[0], after: product });
+    res.json({ product, sharedVersion: next.sharedVersion });
   }),
 );
 app.get(
   "/api/admin/audit",
   route(async (req, res) => {
-    const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
-    const { data, error } = await admin
+    const { page, pageSize } = pageQuery(req);
+    let query = admin
       .from("admin_audit_logs")
-      .select("id,actor_id,target_user_id,action,reason,details,created_at")
+      .select("id,actor_id,target_user_id,action,reason,details,request_id,object_type,object_id,before_data,after_data,created_at", { count: "exact" })
       .order("created_at", { ascending: false })
-      .limit(limit);
+      .range((page - 1) * pageSize, page * pageSize - 1);
+    if (req.query.action) query = query.eq("action", String(req.query.action));
+    if (req.query.actorId) query = query.eq("actor_id", String(req.query.actorId));
+    if (req.query.targetId) query = query.eq("target_user_id", String(req.query.targetId));
+    if (req.query.objectType) query = query.eq("object_type", String(req.query.objectType));
+    if (req.query.from) query = query.gte("created_at", String(req.query.from));
+    if (req.query.to) query = query.lte("created_at", String(req.query.to) + "T23:59:59.999Z");
+    if (req.query.q) query = query.ilike("reason", `%${String(req.query.q).slice(0, 120)}%`);
+    const { data, error, count } = await query;
     if (error)
       throw new DomainError("STORAGE", "Không tải được nhật ký quản trị", 503);
-    res.json({ entries: data ?? [] });
+    const accounts = await team();
+    const names = new Map(accounts.map((x) => [x.id, x.displayName]));
+    res.json({
+      entries: (data ?? []).map((entry) => ({
+        ...entry,
+        actor_name: names.get(entry.actor_id) ?? "Tài khoản đã xoá",
+        target_name: entry.target_user_id ? names.get(entry.target_user_id) ?? "Tài khoản đã xoá" : "Hệ thống",
+      })),
+      page,
+      pageSize,
+      total: count ?? 0,
+      pages: Math.max(1, Math.ceil((count ?? 0) / pageSize)),
+    });
   }),
 );
 

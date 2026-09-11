@@ -1,796 +1,104 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
-  Download,
-  KeyRound,
-  LockKeyhole,
-  LogOut,
-  Plus,
-  RefreshCw,
-  ShieldCheck,
-  Trash2,
-  UnlockKeyhole,
-  Users,
+  Activity, Boxes, ClipboardList, Database, Download, FileClock, KeyRound,
+  LayoutDashboard, LockKeyhole, PackageSearch, Pencil, Plus, RefreshCw,
+  ScrollText, Settings, Tag, Trash2, Undo2, UserRoundCog, Users, WalletCards,
 } from "lucide-react";
-import type { EmployeeAccount, TeamMember } from "../../shared/types";
-import type { Catalogs } from "../../shared/catalogs";
+import type { Customer, EmployeeAccount, Product, TeamMember } from "../../shared/types";
 import { request, useWorkspace } from "../api";
 import {
-  Badge,
-  Button,
-  Card,
-  DateRange,
-  Empty,
-  Field,
-  Heading,
-  Modal,
-  Notice,
-  SearchBox,
-  money,
-  today,
+  Badge, Button, Card, DateRange, Empty, Field, Heading, Modal, Notice,
+  Pager, SearchBox, Stat, Status, day, download, money, today,
 } from "../ui";
 
-type Audit = {
-  id: string;
-  actor_id: string;
-  target_user_id: string | null;
-  action: string;
-  reason: string;
-  details: Record<string, unknown>;
-  created_at: string;
-};
+type Page<T> = { items: T[]; page: number; pageSize: number; total: number; pages: number };
+type AdminProps = { reason: string; members: TeamMember[]; reloadMembers: () => Promise<void> };
+const pageSize = 25;
+const sections = [
+  ["overview", "Tổng quan", LayoutDashboard], ["customers", "Khách hàng", Users],
+  ["orders", "Toa & thực giao", ClipboardList], ["products", "Sản phẩm & bảng giá", PackageSearch],
+  ["inventory", "Kho công ty", Boxes], ["funds", "Quỹ & chương trình", WalletCards],
+  ["employees", "Nhân viên", UserRoundCog], ["catalogs", "Danh mục", Tag],
+  ["imports", "Nhập dữ liệu", FileClock], ["audit", "Nhật ký", ScrollText],
+  ["system", "Cài đặt hệ thống", Settings],
+] as const;
+function requireReason(reason: string) { if (reason.trim().length < 3) throw new Error("Nhập lý do quản trị từ 3 ký tự trước khi lưu"); return reason.trim(); }
+
 export function AdminConsole() {
-  const { state, command, adminTarget, setAdminTarget, adminReason, notify } =
-    useWorkspace();
-  const [members, setMembers] = useState<TeamMember[]>([]),
-    [audit, setAudit] = useState<Audit[]>([]),
-    [q, setQ] = useState(""),
-    [from, setFrom] = useState(new Date().toISOString().slice(0, 7) + "-01"),
-    [to, setTo] = useState(today()),
-    [busy, setBusy] = useState(false),
-    [create, setCreate] = useState(false),
-    [reset, setReset] = useState<EmployeeAccount | null>(null),
-    [prices, setPrices] = useState(false),
-    [catalogsEditor, setCatalogsEditor] = useState(false),
-    [selected, setSelected] = useState<string[]>([]);
-  const load = async () => {
-    setBusy(true);
-    try {
-      const [teamData, auditData] = await Promise.all([
-        request<{ members: TeamMember[] }>(
-          `/api/admin/team?from=${from}&to=${to}`,
-        ),
-        request<{ entries: Audit[] }>("/api/admin/audit?limit=30"),
-      ]);
-      setMembers(teamData.members);
-      setAudit(auditData.entries);
-    } catch (e) {
-      notify((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  useEffect(() => {
-    void load();
-  }, [from, to]);
-  const rows = useMemo(
-    () =>
-      members.filter((m) =>
-        [m.displayName, m.username, m.email]
-          .join(" ")
-          .toLowerCase()
-          .includes(q.toLowerCase()),
-      ),
-    [members, q],
-  );
-  const total = useMemo(
-    () =>
-      rows.reduce(
-        (x, m) => ({
-          ordered: x.ordered + Number(m.summary.ordered),
-          delivered: x.delivered + Number(m.summary.delivered),
-          fund: x.fund + Number(m.summary.fund),
-          available: x.available + Number(m.summary.available),
-        }),
-        { ordered: 0, delivered: 0, fund: 0, available: 0 },
-      ),
-    [rows],
-  );
-  const reason = () => {
-    if (adminReason.trim().length < 3)
-      throw new Error(
-        "Nhập lý do quản trị ở thanh phía trên trước khi thao tác",
-      );
-  };
-  const select = (member: TeamMember) => {
-    setAdminTarget({
-      id: member.id,
-      email: member.email,
-      username: member.username,
-      displayName: member.displayName,
-      role: member.role,
-      active: member.active,
-      createdAt: member.createdAt,
-      updatedAt: member.updatedAt,
-    });
-    notify(`Đã mở dữ liệu của ${member.displayName}.`);
-  };
-  const status = async (member: TeamMember) => {
-    try {
-      reason();
-      setBusy(true);
-      await request(
-        `/api/admin/users/${member.id}`,
-        { active: !member.active, reason: adminReason },
-        "PATCH",
-      );
-      await load();
-      notify(member.active ? "Đã khóa tài khoản." : "Đã mở lại tài khoản.");
-    } catch (e) {
-      notify((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const revokeSessions = async (member: TeamMember) => {
-    try {
-      reason();
-      setBusy(true);
-      await request(`/api/admin/users/${member.id}/revoke-sessions`, {
-        reason: adminReason,
-      });
-      notify(`Đã thu hồi mọi phiên đăng nhập của ${member.displayName}.`);
-    } catch (error) {
-      notify((error as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const remove = async (member: TeamMember) => {
-    if (
-      !confirm(
-        `Xóa tài khoản ${member.displayName} và toàn bộ dữ liệu liên quan?`,
-      )
-    )
-      return;
-    try {
-      reason();
-      setBusy(true);
-      await request(
-        `/api/admin/users/${member.id}`,
-        { reason: adminReason },
-        "DELETE",
-      );
-      if (adminTarget?.id === member.id) setAdminTarget(null);
-      await load();
-      notify("Đã xóa tài khoản.");
-    } catch (e) {
-      notify((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const exportTeam = () => {
-    const csv = [
-      "Nhân viên,Email,Trạng thái,Doanh số đặt,Thực giao,Quỹ,Quỹ khả dụng",
-      ...rows.map((m) =>
-        [
-          m.displayName,
-          m.email,
-          m.active ? "Hoạt động" : "Đã khóa",
-          m.summary.ordered,
-          m.summary.delivered,
-          m.summary.fund,
-          m.summary.available,
-        ]
-          .map((v) => `"${String(v).replaceAll('"', '""')}"`)
-          .join(","),
-      ),
-    ].join("\n");
-    const url = URL.createObjectURL(
-      new Blob([csv], { type: "text/csv;charset=utf-8" }),
-    );
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `truecare-toan-doi-${from}-${to}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-  return (
-    <>
-      <Heading
-        eyebrow="ADMIN CONSOLE"
-        title="Quản trị hệ thống"
-        description="Quản lý nhân viên, dữ liệu thực giao, quỹ dư và bảng giá toàn đội."
-        actions={
-          <>
-            <Button onClick={() => void load()} busy={busy}>
-              <RefreshCw size={16} />
-              Tải lại
-            </Button>
-            <Button onClick={exportTeam}>
-              <Download size={16} />
-              Xuất CSV
-            </Button>
-            <Button onClick={() => setCatalogsEditor(true)}>
-              Danh mục dùng chung
-            </Button>
-            <Button variant="primary" onClick={() => setCreate(true)}>
-              <Plus size={16} />
-              Tạo nhân viên
-            </Button>
-          </>
-        }
-      />
-      <Notice type="info">
-        Mọi chỉnh sửa trên dữ liệu nhân viên yêu cầu lý do ở thanh quản trị và
-        được ghi vào nhật ký bất biến.
-      </Notice>
-      <div className="stats-grid">
-        <div className="stat">
-          <span className="stat-label">Nhân viên hiển thị</span>
-          <strong>{rows.length}</strong>
-        </div>
-        <div className="stat">
-          <span className="stat-label">Doanh số đặt</span>
-          <strong>{money(total.ordered)}</strong>
-        </div>
-        <div className="stat">
-          <span className="stat-label">Thực giao</span>
-          <strong>{money(total.delivered)}</strong>
-        </div>
-        <div className="stat">
-          <span className="stat-label">Quỹ khả dụng</span>
-          <strong className={total.available < 0 ? "negative" : ""}>
-            {money(total.available)}
-          </strong>
-        </div>
-      </div>
-      <Card title="Bộ lọc báo cáo">
-        <div className="toolbar">
-          <DateRange from={from} to={to} setFrom={setFrom} setTo={setTo} />
-          <SearchBox
-            value={q}
-            onChange={setQ}
-            placeholder="Tìm nhân viên, username, email…"
-          />
-          <Button onClick={() => setPrices(true)} disabled={!selected.length}>
-            Cập nhật giá ({selected.length})
-          </Button>
-        </div>
-      </Card>
-      <Card
-        title="Toàn đội"
-        subtitle="Chọn một nhân viên để xem và chỉnh sửa toàn bộ workspace của họ."
-      >
-        {rows.length ? (
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th />
-                  <th>Nhân viên</th>
-                  <th>Trạng thái</th>
-                  <th className="numeric">Đặt hàng</th>
-                  <th className="numeric">Thực giao</th>
-                  <th className="numeric">Quỹ</th>
-                  <th className="numeric">Khả dụng</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((member) => (
-                  <tr key={member.id}>
-                    <td>
-                      <input
-                        aria-label={`Chọn ${member.displayName}`}
-                        type="checkbox"
-                        checked={selected.includes(member.id)}
-                        onChange={(e) =>
-                          setSelected((x) =>
-                            e.target.checked
-                              ? [...x, member.id]
-                              : x.filter((id) => id !== member.id),
-                          )
-                        }
-                      />
-                    </td>
-                    <td>
-                      <strong>{member.displayName}</strong>
-                      <small>
-                        @{member.username} · {member.email}
-                      </small>
-                    </td>
-                    <td>
-                      <Badge tone={member.active ? "green" : "red"}>
-                        {member.active ? "Hoạt động" : "Đã khóa"}
-                      </Badge>
-                    </td>
-                    <td className="numeric">{money(member.summary.ordered)}</td>
-                    <td className="numeric">
-                      {money(member.summary.delivered)}
-                    </td>
-                    <td className="numeric">{money(member.summary.fund)}</td>
-                    <td
-                      className={`numeric ${Number(member.summary.available) < 0 ? "negative" : ""}`}
-                    >
-                      {money(member.summary.available)}
-                    </td>
-                    <td>
-                      <div className="heading-actions">
-                        <Button onClick={() => select(member)}>
-                          Mở dữ liệu
-                        </Button>
-                        <Button onClick={() => void status(member)}>
-                          {member.active ? (
-                            <LockKeyhole size={15} />
-                          ) : (
-                            <UnlockKeyhole size={15} />
-                          )}
-                          {member.active ? "Khóa" : "Mở"}
-                        </Button>
-                        <Button onClick={() => setReset(member)}>
-                          <KeyRound size={15} />
-                          Reset
-                        </Button>
-                        <Button
-                          title="Đăng xuất tài khoản này khỏi mọi thiết bị"
-                          onClick={() => void revokeSessions(member)}
-                        >
-                          <LogOut size={15} />
-                          Thu hồi phiên
-                        </Button>
-                        <Button
-                          variant="danger"
-                          onClick={() => void remove(member)}
-                        >
-                          <Trash2 size={15} />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <Empty
-            title="Chưa có nhân viên"
-            description="Tạo tài khoản nhân viên đầu tiên."
-          />
-        )}
-      </Card>
-      <Card
-        title={
-          "Thùng tạm giữ" + (adminTarget ? " · " + adminTarget.displayName : "")
-        }
-        subtitle="Khôi phục sẽ kiểm tra lại tồn kho và ngân sách. Xoá hoàn toàn không đảo số liệu lần thứ hai."
-      >
-        {state.orders.some((order) => order.deletedAt && !order.purgedAt) ? (
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Toa</th>
-                  <th>Ngày xoá</th>
-                  <th>Lý do</th>
-                  <th className="numeric">Tiền đã thu còn treo</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {state.orders
-                  .filter((order) => order.deletedAt && !order.purgedAt)
-                  .map((order) => (
-                    <tr key={order.id}>
-                      <td>
-                        <strong>{order.code}</strong>
-                        <small>
-                          {order.statusBeforeDelete ?? order.status}
-                        </small>
-                      </td>
-                      <td>
-                        {new Date(order.deletedAt!).toLocaleString("vi-VN")}
-                      </td>
-                      <td>{order.deletionReason}</td>
-                      <td className="numeric">
-                        {money(
-                          state.payments
-                            .filter((payment) => payment.orderId === order.id)
-                            .reduce(
-                              (sum, payment) => sum + Number(payment.amount),
-                              0,
-                            ),
-                        )}
-                      </td>
-                      <td>
-                        <div className="heading-actions">
-                          <Button
-                            onClick={async () => {
-                              try {
-                                reason();
-                                await command("restoreOrder", {
-                                  id: order.id,
-                                  reason: adminReason,
-                                });
-                                notify("Đã khôi phục toa và áp lại số liệu.");
-                              } catch (error) {
-                                notify((error as Error).message);
-                              }
-                            }}
-                          >
-                            Khôi phục
-                          </Button>
-                          <Button
-                            variant="danger"
-                            onClick={async () => {
-                              if (
-                                !confirm(
-                                  "Xoá hoàn toàn " +
-                                    order.code +
-                                    "? Dấu vết kiểm toán vẫn được giữ.",
-                                )
-                              )
-                                return;
-                              try {
-                                reason();
-                                await command("purgeOrder", {
-                                  id: order.id,
-                                  reason: adminReason,
-                                });
-                                notify(
-                                  "Đã xoá nội dung toa khỏi thùng tạm giữ.",
-                                );
-                              } catch (error) {
-                                notify((error as Error).message);
-                              }
-                            }}
-                          >
-                            Xoá hoàn toàn
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <Empty title="Thùng tạm giữ đang trống" />
-        )}
-      </Card>
-      <Card
-        title="Nhật ký quản trị"
-        subtitle="Mật khẩu không bao giờ xuất hiện trong nhật ký."
-      >
-        {audit.length ? (
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Thời điểm</th>
-                  <th>Thao tác</th>
-                  <th>Lý do</th>
-                  <th>Đối tượng</th>
-                </tr>
-              </thead>
-              <tbody>
-                {audit.map((entry) => (
-                  <tr key={entry.id}>
-                    <td>
-                      {new Date(entry.created_at).toLocaleString("vi-VN")}
-                    </td>
-                    <td>
-                      <strong>{entry.action}</strong>
-                    </td>
-                    <td>{entry.reason}</td>
-                    <td>
-                      <small>{entry.target_user_id || "Hệ thống"}</small>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <Empty title="Chưa có thao tác quản trị" />
-        )}
-      </Card>
-      {create && (
-        <CreateEmployee
-          onClose={() => setCreate(false)}
-          onSaved={async () => {
-            setCreate(false);
-            await load();
-          }}
-        />
-      )}
-      {reset && (
-        <ResetPassword
-          account={reset}
-          onClose={() => setReset(null)}
-          onSaved={() => {
-            setReset(null);
-            notify("Đã đặt lại mật khẩu.");
-          }}
-        />
-      )}
-      {prices && (
-        <BulkPrice
-          userIds={selected}
-          members={members}
-          onClose={() => setPrices(false)}
-          onSaved={async () => {
-            setPrices(false);
-            await load();
-            notify("Đã cập nhật bảng giá.");
-          }}
-        />
-      )}
-      {catalogsEditor && state.catalogs && (
-        <CatalogEditor
-          catalogs={state.catalogs}
-          onClose={() => setCatalogsEditor(false)}
-          onSaved={() => {
-            setCatalogsEditor(false);
-            notify("Đã cập nhật danh mục dùng chung.");
-          }}
-        />
-      )}
-    </>
-  );
+  const location = useLocation(), navigate = useNavigate();
+  const { adminReason, setAdminReason, notify } = useWorkspace();
+  const section = location.pathname.split("/")[2] || "overview";
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const reloadMembers = async () => setMembers((await request<{ members: TeamMember[] }>("/api/admin/team")).members);
+  useEffect(() => { void reloadMembers().catch((error) => notify((error as Error).message)); }, []);
+  const props = { reason: adminReason, members, reloadMembers };
+  return <>
+    <Heading eyebrow="ADMIN CONSOLE" title="Quản trị TrueCare" description="Theo dõi và xử lý dữ liệu toàn hệ thống tại một nơi." />
+    <Card className="admin-reason-card"><Field label="Lý do thao tác quản trị"><input value={adminReason} onChange={(e) => setAdminReason(e.target.value)} placeholder="Bắt buộc khi sửa, xoá, gộp hoặc điều chỉnh số liệu" /></Field><small>Lý do được lưu cùng người thao tác, thời điểm và dữ liệu trước/sau.</small></Card>
+    <nav className="admin-nav" aria-label="Chức năng quản trị">{sections.map(([key, label, Icon]) => <button key={key} className={section === key ? "active" : ""} onClick={() => navigate(`/admin/${key}`)}><Icon size={17}/>{label}</button>)}</nav>
+    {section === "overview" && <Overview {...props}/>} {section === "customers" && <CustomersAdmin {...props}/>} {section === "orders" && <OrdersAdmin {...props}/>} {section === "products" && <ProductsAdmin {...props}/>} {section === "inventory" && <InventoryAdmin {...props}/>} {section === "funds" && <FundsAdmin {...props}/>} {section === "employees" && <EmployeesAdmin {...props}/>} {section === "catalogs" && <CatalogsAdmin {...props}/>} {section === "imports" && <ImportsAdmin {...props}/>} {section === "audit" && <AuditAdmin {...props}/>} {section === "system" && <SystemAdmin {...props}/>}
+  </>;
 }
-function CatalogEditor({
-  catalogs,
-  onClose,
-  onSaved,
-}: {
-  catalogs: Catalogs;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { command, busy, notify } = useWorkspace();
-  const fields: [keyof Catalogs, string][] = [
-    ["districts", "Huyện / khu vực"],
-    ["visitDays", "Thứ đi tuyến (đúng 6 dòng, Thứ Hai đến Thứ Bảy)"],
-    ["storeTypes", "Loại cửa hiệu"],
-    ["routes", "Tuyến bán hàng"],
-    ["brands", "Nhãn hiệu"],
-    ["groups", "Nhóm hàng"],
-    ["units", "Đơn vị bán"],
-    ["frequencies", "Tần suất ghé"],
-  ];
-  const save = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    try {
-      const form = new FormData(event.currentTarget);
-      const payload = Object.fromEntries(
-        fields.map(([key]) => [
-          key,
-          String(form.get(key) ?? "")
-            .split("\n")
-            .map((value) => value.trim())
-            .filter(Boolean),
-        ]),
-      );
-      await command("saveCatalog", {
-        ...payload,
-        reason: form.get("reason"),
-      });
-      onSaved();
-    } catch (error) {
-      notify((error as Error).message);
-    }
-  };
-  return (
-    <Modal title="Danh mục dùng chung toàn đội" onClose={onClose} wide>
-      <form className="form-stack" onSubmit={save}>
-        <Notice>
-          Mỗi dòng là một lựa chọn. Thay đổi áp dụng cho mọi nhân viên và được
-          kiểm tra phiên bản để tránh ghi đè.
-        </Notice>
-        <Field label="Lý do thay đổi">
-          <textarea name="reason" required />
-        </Field>
-        <div className="form-grid">
-          {fields.map(([key, label]) => (
-            <Field key={key} label={label}>
-              <textarea
-                name={key}
-                rows={5}
-                defaultValue={catalogs[key].join("\n")}
-              />
-            </Field>
-          ))}
-        </div>
-        <div className="modal-actions">
-          <Button type="button" onClick={onClose}>
-            Huỷ
-          </Button>
-          <Button variant="primary" busy={busy}>
-            Lưu danh mục
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
+
+function Overview({ members }: AdminProps) {
+  const { notify } = useWorkspace(); const navigate = useNavigate(); const [data, setData] = useState<any>(null);
+  const load = () => request<any>("/api/admin/dashboard").then(setData).catch((e) => notify(e.message)); useEffect(() => void load(), []);
+  if (!data) return <Card><div className="loading-row">Đang tải tổng quan…</div></Card>;
+  const s = data.summary;
+  return <><div className="stats-grid"><Stat label="Nhân viên" value={String(s.employees)}/><Stat label="Toa đang theo dõi" value={String(s.orders)}/><Stat label="Giao một phần" value={String(s.partialOrders)} accent={s.partialOrders ? "warning" : ""}/><Stat label="Quỹ âm" value={String(s.negativeFunds)} accent={s.negativeFunds ? "negative" : ""}/><Stat label="Kho thấp" value={String(s.lowStock)} accent={s.lowStock ? "warning" : ""}/><Stat label="Dữ liệu cần đối chiếu" value={String(s.unresolved)} accent={s.unresolved ? "warning" : ""}/></div><div className="admin-grid"><Card title="Việc cần xử lý" actions={<Button onClick={load}><RefreshCw size={15}/>Tải lại</Button>}><div className="action-list"><button onClick={() => navigate("/admin/orders")}>Toa giao một phần <Badge tone="amber">{s.partialOrders}</Badge></button><button onClick={() => navigate("/admin/inventory")}>Sản phẩm sắp hết hoặc âm <Badge tone="amber">{s.lowStock}</Badge></button><button onClick={() => navigate("/admin/funds")}>Nhân viên có quỹ âm <Badge tone="red">{s.negativeFunds}</Badge></button><button onClick={() => navigate("/admin/customers")}>Nhóm khách có thể bị trùng <Badge tone="blue">{s.duplicateCustomers}</Badge></button><button onClick={() => navigate("/admin/products")}>Sản phẩm cần đối chiếu <Badge tone="blue">{s.productsNeedingReview}</Badge></button></div></Card><Card title="Tình trạng tài khoản"><div className="summary-list"><div><span>Đang hoạt động</span><strong>{members.filter((x) => x.active).length}</strong></div><div><span>Đã khóa</span><strong>{members.filter((x) => !x.active).length}</strong></div><div><span>Chưa từng đăng nhập</span><strong>{members.filter((x) => !x.lastLoginAt).length}</strong></div></div></Card></div></>;
 }
-function CreateEmployee({
-  onClose,
-  onSaved,
-}: {
-  onClose: () => void;
-  onSaved: () => Promise<void>;
-}) {
-  const { adminReason, notify, busy } = useWorkspace();
-  const save = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    try {
-      const f = new FormData(e.currentTarget);
-      await request("/api/admin/users", {
-        email: f.get("email"),
-        username: f.get("username"),
-        displayName: f.get("displayName"),
-        password: f.get("password"),
-        reason: adminReason,
-      });
-      await onSaved();
-      notify("Đã tạo tài khoản nhân viên.");
-    } catch (x) {
-      notify((x as Error).message);
-    }
-  };
-  return (
-    <Modal title="Tạo tài khoản nhân viên" onClose={onClose}>
-      <form className="form-stack" onSubmit={save}>
-        <Notice>
-          Nhập lý do quản trị ở thanh trên trước khi lưu. Mật khẩu tối thiểu 10
-          ký tự.
-        </Notice>
-        <Field label="Tên hiển thị">
-          <input name="displayName" required />
-        </Field>
-        <Field label="Tên đăng nhập">
-          <input name="username" required autoComplete="off" />
-        </Field>
-        <Field label="Email">
-          <input name="email" type="email" required />
-        </Field>
-        <Field label="Mật khẩu tạm">
-          <input
-            name="password"
-            type="password"
-            minLength={10}
-            required
-            autoComplete="new-password"
-          />
-        </Field>
-        <div className="modal-actions">
-          <Button type="button" onClick={onClose}>
-            Hủy
-          </Button>
-          <Button variant="primary" busy={busy}>
-            Tạo tài khoản
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
+
+type CustomerRow = Customer & { usage: { orders: number; visits: number; revenue: string } };
+function CustomersAdmin({ reason }: AdminProps) {
+  const { notify } = useWorkspace(); const navigate = useNavigate(); const [rows, setRows] = useState<Page<CustomerRow>|null>(null), [q, setQ] = useState(""), [status, setStatus] = useState("active"), [page, setPage] = useState(1), [merge, setMerge] = useState<CustomerRow|null>(null);
+  const load = () => request<Page<CustomerRow>>(`/api/admin/customers?q=${encodeURIComponent(q)}&status=${status}&page=${page}&pageSize=${pageSize}`).then(setRows).catch((e) => notify(e.message)); useEffect(() => void load(), [status, page]);
+  const act = async (row: CustomerRow, action: "delete"|"restore"|"purge") => { try { requireReason(reason); if (action !== "restore" && !confirm(action === "purge" ? "Xoá vĩnh viễn khách này?" : "Đưa khách này vào thùng rác?")) return; const path = action === "delete" ? `/api/admin/customers/${row.id}` : `/api/admin/customers/${row.id}/${action}`; await request(path, { reason, idempotencyKey: crypto.randomUUID() }, action === "delete" || action === "purge" ? "DELETE" : "POST"); notify(action === "restore" ? "Đã khôi phục khách hàng." : action === "purge" ? "Đã xoá vĩnh viễn khách hàng." : "Đã đưa khách hàng vào thùng rác."); await load(); } catch (error) { notify((error as Error).message); } };
+  return <><Card title="Danh bạ khách hàng toàn hệ thống" actions={<Button variant="primary" onClick={() => navigate("/customers")}><Plus size={15}/>Tạo hoặc sửa khách</Button>}><div className="toolbar"><SearchBox value={q} onChange={setQ} placeholder="Tìm tên, điện thoại, địa chỉ, tuyến…"/><select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}><option value="active">Đang hoạt động</option><option value="archived">Đã lưu trữ</option><option value="deleted">Thùng rác</option><option value="merged">Đã gộp</option><option value="all">Tất cả</option></select><Button onClick={() => { setPage(1); void load(); }}>Áp dụng</Button></div>{rows?.items.length ? <div className="table-scroll"><table><thead><tr><th>Khách hàng</th><th>Khu vực / tuyến</th><th className="numeric">Toa</th><th className="numeric">Thực giao</th><th>Trạng thái</th><th/></tr></thead><tbody>{rows.items.map((row) => <tr key={row.id}><td><strong>{row.name}</strong><small>{row.phone || "Chưa có điện thoại"}</small></td><td>{row.district}<small>{row.route}</small></td><td className="numeric">{row.usage.orders}</td><td className="numeric">{money(row.usage.revenue)}</td><td>{row.mergedInto ? <Badge>Đã gộp</Badge> : row.deletedAt ? <Badge tone="red">Thùng rác</Badge> : row.archived ? <Badge tone="amber">Lưu trữ</Badge> : <Badge tone="green">Hoạt động</Badge>}</td><td><div className="heading-actions">{!row.deletedAt && !row.mergedInto && <><Button onClick={() => setMerge(row)}>Gộp</Button><Button variant="danger" onClick={() => void act(row, "delete")}><Trash2 size={14}/>Xoá</Button></>}{row.deletedAt && <><Button onClick={() => void act(row, "restore")}><Undo2 size={14}/>Khôi phục</Button><Button variant="danger" disabled={row.usage.orders + row.usage.visits > 0} onClick={() => void act(row, "purge")}>Xoá vĩnh viễn</Button></>}</div></td></tr>)}</tbody></table></div> : <Empty title="Không có khách hàng phù hợp"/>}{rows && <Pager page={page} count={rows.total} size={pageSize} onChange={setPage}/>}</Card>{merge && <MergeCustomer source={merge} reason={reason} onClose={() => setMerge(null)} onSaved={async () => { setMerge(null); await load(); }}/>}</>;
 }
-function ResetPassword({
-  account,
-  onClose,
-  onSaved,
-}: {
-  account: EmployeeAccount;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { adminReason, notify, busy } = useWorkspace();
-  const save = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    try {
-      const f = new FormData(e.currentTarget);
-      await request(`/api/admin/users/${account.id}/reset-password`, {
-        password: f.get("password"),
-        reason: adminReason,
-      });
-      onSaved();
-    } catch (x) {
-      notify((x as Error).message);
-    }
-  };
-  return (
-    <Modal title={`Đặt lại mật khẩu: ${account.displayName}`} onClose={onClose}>
-      <form className="form-stack" onSubmit={save}>
-        <Field label="Mật khẩu mới">
-          <input
-            name="password"
-            type="password"
-            minLength={10}
-            required
-            autoComplete="new-password"
-          />
-        </Field>
-        <div className="modal-actions">
-          <Button type="button" onClick={onClose}>
-            Hủy
-          </Button>
-          <Button variant="primary" busy={busy}>
-            Đặt lại
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
+function MergeCustomer({ source, reason, onClose, onSaved }: { source: CustomerRow; reason: string; onClose: () => void; onSaved: () => Promise<void> }) {
+  const { notify } = useWorkspace(); const [targets, setTargets] = useState<CustomerRow[]>([]), [targetId, setTargetId] = useState(""); useEffect(() => { void request<Page<CustomerRow>>("/api/admin/customers?status=active&pageSize=100").then((x) => setTargets(x.items.filter((row) => row.id !== source.id))); }, []);
+  const save = async () => { try { requireReason(reason); if (!targetId) throw new Error("Chọn khách hàng nhận dữ liệu"); await request(`/api/admin/customers/${source.id}/merge`, { targetId, reason, idempotencyKey: crypto.randomUUID() }); notify("Đã gộp khách và chuyển toàn bộ lịch sử."); await onSaved(); } catch (error) { notify((error as Error).message); } };
+  return <Modal title={`Gộp khách: ${source.name}`} onClose={onClose}><Notice>Toàn bộ toa và lượt ghé sẽ chuyển sang khách được chọn. Khách nguồn được giữ làm dấu vết.</Notice><Field label="Khách hàng nhận dữ liệu"><select value={targetId} onChange={(e) => setTargetId(e.target.value)}><option value="">Chọn khách hàng</option>{targets.map((row) => <option key={row.id} value={row.id}>{row.name} · {row.phone}</option>)}</select></Field><div className="modal-actions"><Button onClick={onClose}>Huỷ</Button><Button variant="primary" onClick={() => void save()}>Xác nhận gộp</Button></div></Modal>;
 }
-function BulkPrice({
-  userIds,
-  members,
-  onClose,
-  onSaved,
-}: {
-  userIds: string[];
-  members: TeamMember[];
-  onClose: () => void;
-  onSaved: () => Promise<void>;
-}) {
-  const { adminReason, notify, busy } = useWorkspace();
-  const save = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    try {
-      const f = new FormData(e.currentTarget);
-      const patch: any = {};
-      for (const key of ["cost", "price", "pack", "effectiveDate"])
-        if (f.get(key) !== "")
-          patch[key] = key === "pack" ? Number(f.get(key)) : f.get(key);
-      await request("/api/admin/catalog/bulk-price", {
-        userIds,
-        match: { code: f.get("code") },
-        patch,
-        reason: adminReason,
-      });
-      await onSaved();
-    } catch (x) {
-      notify((x as Error).message);
-    }
-  };
-  return (
-    <Modal title="Cập nhật bảng giá hàng loạt" onClose={onClose}>
-      <form className="form-stack" onSubmit={save}>
-        <Notice>
-          Áp dụng cho {userIds.length} nhân viên:{" "}
-          {members
-            .filter((m) => userIds.includes(m.id))
-            .map((m) => m.displayName)
-            .join(", ")}
-          . Mã sản phẩm phải khớp duy nhất trong từng workspace.
-        </Notice>
-        <Field label="Mã sản phẩm">
-          <input name="code" required />
-        </Field>
-        <div className="form-grid">
-          <Field label="Giá vốn mới">
-            <input name="cost" type="number" min="0" />
-          </Field>
-          <Field label="Giá chào mới">
-            <input name="price" type="number" min="0" />
-          </Field>
-          <Field label="Quy cách mới">
-            <input name="pack" type="number" min="1" />
-          </Field>
-          <Field label="Ngày hiệu lực">
-            <input name="effectiveDate" type="date" />
-          </Field>
-        </div>
-        <div className="modal-actions">
-          <Button type="button" onClick={onClose}>
-            Hủy
-          </Button>
-          <Button variant="primary" busy={busy}>
-            Xác nhận cập nhật
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
+
+function OrdersAdmin({ members, reason }: AdminProps) {
+  const { setAdminTarget, notify } = useWorkspace(); const navigate = useNavigate(); const [rows, setRows] = useState<Page<any>|null>(null), [q, setQ] = useState(""), [status, setStatus] = useState("all"), [ownerId, setOwnerId] = useState(""), [page, setPage] = useState(1), [from, setFrom] = useState(new Date().toISOString().slice(0, 7) + "-01"), [to, setTo] = useState(today());
+  const load = () => request<Page<any>>(`/api/admin/orders?q=${encodeURIComponent(q)}&status=${status}&ownerId=${ownerId}&from=${from}&to=${to}&page=${page}&pageSize=${pageSize}`).then(setRows).catch((e) => notify(e.message)); useEffect(() => void load(), [page]);
+  const open = (row: any) => { const member = members.find((x) => x.id === row.ownerId); if (member) setAdminTarget(member); navigate(`/orders/${row.id}`); };
+  const trashAction = async (row: any, action: "restore"|"purge") => { try { requireReason(reason); if (action === "purge" && !confirm(`Xoá hoàn toàn toa ${row.code}?`)) return; await request(`/api/admin/orders/${row.ownerId}/${row.id}/${action}`, { reason, idempotencyKey: crypto.randomUUID() }, action === "purge" ? "DELETE" : "POST"); notify(action === "restore" ? "Đã khôi phục toa và áp lại số liệu." : "Đã xoá nội dung toa khỏi thùng tạm giữ."); await load(); } catch (error) { notify((error as Error).message); } };
+  return <Card title="Toa và thực giao toàn đội"><div className="toolbar"><SearchBox value={q} onChange={setQ}/><select value={ownerId} onChange={(e) => setOwnerId(e.target.value)}><option value="">Mọi nhân viên</option>{members.map((x) => <option value={x.id} key={x.id}>{x.displayName}</option>)}</select><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="all">Mọi trạng thái</option><option value="draft">Nháp</option><option value="confirmed">Đã chốt</option><option value="partial">Giao một phần</option><option value="delivered">Giao đủ</option><option value="trash">Thùng tạm giữ</option></select><DateRange from={from} to={to} setFrom={setFrom} setTo={setTo}/><Button onClick={() => { setPage(1); void load(); }}>Áp dụng</Button></div>{rows?.items.length ? <div className="table-scroll"><table><thead><tr><th>Toa</th><th>Nhân viên</th><th>Khách hàng</th><th>Ngày</th><th>Trạng thái</th><th className="numeric">Tiền hàng</th><th/></tr></thead><tbody>{rows.items.map((row) => <tr key={`${row.ownerId}:${row.id}`}><td><strong>{row.code}</strong></td><td>{row.ownerName}</td><td>{row.customerName}</td><td>{day(row.date)}</td><td>{row.deletedAt ? <Badge tone="red">Thùng tạm giữ</Badge> : <Status value={row.status}/>}</td><td className="numeric">{money(row.total)}</td><td>{row.deletedAt ? <div className="heading-actions"><Button onClick={() => void trashAction(row, "restore")}>{"Kh\u00f4i ph\u1ee5c"}</Button><Button variant="danger" onClick={() => void trashAction(row, "purge")}>{"Xo\u00e1 h\u1eb3n"}</Button></div> : <Button onClick={() => open(row)}>{"M\u1edf toa"}</Button>}</td></tr>)}</tbody></table></div> : <Empty title="Không có toa phù hợp"/>}{rows && <Pager page={page} count={rows.total} size={pageSize} onChange={setPage}/>}</Card>;
 }
+
+function ProductsAdmin({ reason }: AdminProps) {
+  const { notify } = useWorkspace(); const navigate = useNavigate(); const [rows, setRows] = useState<Page<any>|null>(null), [q, setQ] = useState(""), [status, setStatus] = useState("active"), [price, setPrice] = useState<Product|null>(null), [history, setHistory] = useState<Product|null>(null); const load = () => request<Page<any>>(`/api/admin/products?q=${encodeURIComponent(q)}&status=${status}&pageSize=100`).then(setRows).catch((e) => notify(e.message)); useEffect(() => void load(), [status]);
+  return <><Card title="Sản phẩm và bảng giá dùng chung" actions={<Button variant="primary" onClick={() => navigate("/products")}><Plus size={15}/>Thêm sản phẩm</Button>}><div className="toolbar"><SearchBox value={q} onChange={setQ}/><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="active">Đang kinh doanh</option><option value="archived">Ngừng kinh doanh</option><option value="all">Tất cả</option></select><Button onClick={load}>Áp dụng</Button></div>{rows?.items.length ? <div className="table-scroll"><table><thead><tr><th>Mã / sản phẩm</th><th>Quy cách</th><th className="numeric">Giá gốc</th><th className="numeric">Giá chào</th><th className="numeric">Đang dùng</th><th/></tr></thead><tbody>{rows.items.map((row) => <tr key={row.id}><td><strong>{row.code || "—"} · {row.name}</strong><small>{row.group} · {row.brand}</small></td><td>{row.pack} {row.unit}/thùng</td><td className="numeric">{row.cost == null ? "Chưa có" : money(row.cost)}</td><td className="numeric">{row.price == null ? "Chưa có" : money(row.price)}</td><td className="numeric">{row.usage.orders} toa</td><td><div className="heading-actions"><Button onClick={() => setHistory(row)}>{"L\u1ecbch s\u1eed"}</Button><Button onClick={() => setPrice(row)}><Pencil size={14}/>{"C\u1eadp nh\u1eadt gi\u00e1"}</Button></div></td></tr>)}</tbody></table></div> : <Empty title="Chưa có sản phẩm"/>}</Card>{price && <PriceModal product={price} reason={reason} onClose={() => setPrice(null)} onSaved={async () => { setPrice(null); await load(); }}/>} {history && <PriceHistoryModal product={history} onClose={() => setHistory(null)}/>}</>;
+}
+function PriceModal({ product, reason, onClose, onSaved }: { product: Product; reason: string; onClose: () => void; onSaved: () => Promise<void> }) { const { notify } = useWorkspace(); const save = async (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); try { requireReason(reason); const f = new FormData(e.currentTarget); await request("/api/admin/catalog/bulk-price", { match: { code: product.code }, patch: { cost: f.get("cost"), price: f.get("price"), pack: Number(f.get("pack")), effectiveDate: f.get("effectiveDate") }, reason, idempotencyKey: crypto.randomUUID() }); notify("Đã cập nhật bảng giá toàn hệ thống."); await onSaved(); } catch (error) { notify((error as Error).message); } }; return <Modal title={`Cập nhật giá · ${product.name}`} onClose={onClose}><Notice>Giá mới áp dụng toàn hệ thống. Toa cũ vẫn giữ giá tại thời điểm lập chứng từ.</Notice><form className="form-stack" onSubmit={save}><div className="form-grid"><Field label="Giá gốc"><input name="cost" type="number" min="0" defaultValue={product.cost ?? ""}/></Field><Field label="Giá chào"><input name="price" type="number" min="0" defaultValue={product.price ?? ""}/></Field><Field label="Quy cách"><input name="pack" type="number" min="1" defaultValue={product.pack}/></Field><Field label="Ngày hiệu lực"><input name="effectiveDate" type="date" defaultValue={product.effectiveDate}/></Field></div><div className="modal-actions"><Button type="button" onClick={onClose}>Huỷ</Button><Button variant="primary">Lưu bảng giá</Button></div></form></Modal>; }
+
+function PriceHistoryModal({ product, onClose }: { product: Product; onClose: () => void }) { const { notify } = useWorkspace(); const [entries, setEntries] = useState<any[]>([]); useEffect(() => { void request<{ entries: any[] }>(`/api/admin/products/${product.id}/prices`).then((x) => setEntries(x.entries)).catch((e) => notify(e.message)); }, []); return <Modal title={`Lịch sử giá · ${product.name}`} onClose={onClose} wide>{entries.length ? <div className="table-scroll"><table><thead><tr><th>Hiệu lực</th><th className="numeric">Giá gốc</th><th className="numeric">Giá chào</th><th>Quy cách</th><th>Lý do</th></tr></thead><tbody>{entries.map((entry) => <tr key={entry.id}><td>{day(entry.effective_date)}</td><td className="numeric">{entry.cost == null ? "—" : money(entry.cost)}</td><td className="numeric">{entry.quote_price == null ? "—" : money(entry.quote_price)}</td><td>{entry.pack}</td><td>{entry.reason}</td></tr>)}</tbody></table></div> : <Empty title="Chưa có lịch sử giá"/>}</Modal>; }
+
+function InventoryAdmin({ reason }: AdminProps) {
+  const { notify } = useWorkspace(); const [data, setData] = useState<any>(null), [q, setQ] = useState(""), [adjust, setAdjust] = useState<any>(null); const load = () => request<any>(`/api/admin/inventory?q=${encodeURIComponent(q)}`).then(setData).catch((e) => notify(e.message)); useEffect(() => void load(), []);
+  return <><Card title="Kho công ty" subtitle="Nhân viên chỉ xem. Giao, trả, xoá và khôi phục toa cập nhật số dư này."><div className="toolbar"><SearchBox value={q} onChange={setQ}/><Button onClick={load}>Áp dụng</Button></div>{data?.balances?.length ? <div className="table-scroll"><table><thead><tr><th>Sản phẩm</th><th className="numeric">Tồn đơn vị</th><th>Trạng thái</th><th>Cập nhật</th><th/></tr></thead><tbody>{data.balances.map((row: any) => <tr key={row.productId}><td><strong>{row.product?.name ?? row.productId}</strong><small>{row.product?.code}</small></td><td className={`numeric ${row.quantity < 0 ? "negative" : ""}`}>{row.quantity}</td><td>{row.tracked ? row.quantity <= 12 ? <Badge tone="amber">Kho thấp</Badge> : <Badge tone="green">Đang theo dõi</Badge> : <Badge>Không theo dõi</Badge>}</td><td>{day(row.updatedAt)}</td><td><Button onClick={() => setAdjust(row)}>Điều chỉnh</Button></td></tr>)}</tbody></table></div> : <Empty title="Chưa khai báo tồn kho"/>}</Card>{adjust && <InventoryModal row={adjust} reason={reason} onClose={() => setAdjust(null)} onSaved={async () => { setAdjust(null); await load(); }}/>}</>;
+}
+function InventoryModal({ row, reason, onClose, onSaved }: any) { const { notify } = useWorkspace(); const save = async (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); try { requireReason(reason); const f = new FormData(e.currentTarget); await request("/api/admin/inventory/adjust", { productId: row.productId, mode: f.get("mode"), quantity: Number(f.get("quantity")), tracked: true, reason, idempotencyKey: crypto.randomUUID() }); notify("Đã điều chỉnh kho công ty."); await onSaved(); } catch (error) { notify((error as Error).message); } }; return <Modal title={`Điều chỉnh kho · ${row.product?.name ?? row.productId}`} onClose={onClose}><form className="form-stack" onSubmit={save}><Field label="Cách nhập"><select name="mode"><option value="set">Đặt số tồn mới</option><option value="delta">Cộng/trừ biến động</option></select></Field><Field label="Số lượng"><input name="quantity" type="number" required/></Field><div className="modal-actions"><Button type="button" onClick={onClose}>Huỷ</Button><Button variant="primary">Lưu điều chỉnh</Button></div></form></Modal>; }
+
+function FundsAdmin({ members }: AdminProps) { const { notify, setAdminTarget } = useWorkspace(); const navigate = useNavigate(); const [rows, setRows] = useState<Page<any>|null>(null), [owner, setOwner] = useState(""); const load = () => request<Page<any>>(`/api/admin/funds?ownerId=${owner}&pageSize=100`).then(setRows).catch((e) => notify(e.message)); useEffect(() => void load(), [owner]); const open = (id: string, path: string) => { const member = members.find((x) => x.id === id); if (member) setAdminTarget(member); navigate(path); }; return <><Card title="Quỹ toàn đội"><div className="toolbar"><select value={owner} onChange={(e) => setOwner(e.target.value)}><option value="">Mọi nhân viên</option>{members.map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}</select><Button disabled={!owner} onClick={() => open(owner, "/fund")}>Điều chỉnh quỹ nhân viên</Button></div>{rows?.items.length ? <div className="table-scroll"><table><thead><tr><th>Ngày</th><th>Nhân viên</th><th>Loại</th><th>Nội dung</th><th className="numeric">Số tiền</th></tr></thead><tbody>{rows.items.map((row) => <tr key={`${row.ownerId}:${row.id}`}><td>{day(row.date)}</td><td>{row.ownerName}</td><td>{row.type}</td><td>{row.notes}</td><td className={`numeric ${Number(row.amount) < 0 ? "negative" : "positive"}`}>{money(row.amount)}</td></tr>)}</tbody></table></div> : <Empty title="Chưa có bút toán quỹ"/>}</Card><ProgramsTable members={members}/></>; }
+function ProgramsTable({ members }: { members: TeamMember[] }) { const { notify, setAdminTarget } = useWorkspace(); const navigate = useNavigate(); const [rows, setRows] = useState<Page<any>|null>(null); useEffect(() => { void request<Page<any>>("/api/admin/programs?pageSize=100").then(setRows).catch((e) => notify(e.message)); }, []); return <Card title="Chương trình toàn đội">{rows?.items.length ? <div className="table-scroll"><table><thead><tr><th>Chương trình</th><th>Nhân viên</th><th>Trạng thái</th><th className="numeric">Quỹ giữ</th><th>Hết hạn</th><th/></tr></thead><tbody>{rows.items.map((row) => <tr key={`${row.ownerId}:${row.id}`}><td>{row.name}</td><td>{row.ownerName}</td><td><Status value={row.status}/></td><td className="numeric">{money(row.reserved)}</td><td>{day(row.expiresAt)}</td><td><Button onClick={() => { const member = members.find((x) => x.id === row.ownerId); if (member) setAdminTarget(member); navigate("/programs"); }}>Mở</Button></td></tr>)}</tbody></table></div> : <Empty title="Chưa có chương trình"/>}</Card>; }
+
+function EmployeesAdmin({ members, reloadMembers, reason }: AdminProps) {
+  const { notify, setAdminTarget } = useWorkspace(); const [create, setCreate] = useState(false), [edit, setEdit] = useState<EmployeeAccount|null>(null), [reset, setReset] = useState<EmployeeAccount|null>(null);
+  const action = async (member: TeamMember, kind: "toggle"|"revoke"|"delete") => { try { requireReason(reason); if (kind === "delete" && !confirm(`Xoá tài khoản ${member.displayName}?`)) return; const path = kind === "revoke" ? `/api/admin/users/${member.id}/revoke-sessions` : `/api/admin/users/${member.id}`; await request(path, kind === "toggle" ? { active: !member.active, reason } : { reason }, kind === "delete" ? "DELETE" : kind === "toggle" ? "PATCH" : "POST"); notify("Đã cập nhật tài khoản."); await reloadMembers(); } catch (error) { notify((error as Error).message); } };
+  return <><Card title="Tài khoản nhân viên" actions={<Button variant="primary" onClick={() => setCreate(true)}><Plus size={15}/>Tạo nhân viên</Button>}>{members.length ? <div className="table-scroll"><table><thead><tr><th>Nhân viên</th><th>Vai trò</th><th>Trạng thái</th><th>Lần đăng nhập cuối</th><th/></tr></thead><tbody>{members.map((member) => <tr key={member.id}><td><strong>{member.displayName}</strong><small>@{member.username} · {member.email}</small></td><td>{member.role}</td><td><Badge tone={member.active ? "green" : "red"}>{member.active ? "Hoạt động" : "Đã khoá"}</Badge></td><td>{member.lastLoginAt ? new Date(member.lastLoginAt).toLocaleString("vi-VN") : "Chưa đăng nhập"}</td><td><div className="heading-actions"><Button onClick={() => setAdminTarget(member)}>Mở dữ liệu</Button><Button onClick={() => setEdit(member)}><Pencil size={14}/>Sửa</Button><Button onClick={() => void action(member, "toggle")}><LockKeyhole size={14}/>{member.active ? "Khoá" : "Mở"}</Button><Button onClick={() => setReset(member)}><KeyRound size={14}/>Mật khẩu</Button><Button onClick={() => void action(member, "revoke")}>Thu hồi phiên</Button><Button variant="danger" onClick={() => void action(member, "delete")}><Trash2 size={14}/></Button></div></td></tr>)}</tbody></table></div> : <Empty title="Chưa có nhân viên"/>}</Card>{create && <EmployeeModal reason={reason} onClose={() => setCreate(false)} onSaved={async () => { setCreate(false); await reloadMembers(); }}/>} {edit && <EmployeeModal account={edit} reason={reason} onClose={() => setEdit(null)} onSaved={async () => { setEdit(null); await reloadMembers(); }}/>} {reset && <PasswordModal account={reset} reason={reason} onClose={() => setReset(null)}/>}</>;
+}
+function EmployeeModal({ account, reason, onClose, onSaved }: { account?: EmployeeAccount; reason: string; onClose: () => void; onSaved: () => Promise<void> }) { const { notify } = useWorkspace(); const save = async (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); try { requireReason(reason); const fields = Object.fromEntries(new FormData(e.currentTarget)); await request(account ? `/api/admin/users/${account.id}` : "/api/admin/users", { ...fields, reason }, account ? "PATCH" : "POST"); notify(account ? "Đã cập nhật nhân viên." : "Đã tạo nhân viên."); await onSaved(); } catch (error) { notify((error as Error).message); } }; return <Modal title={account ? "Sửa tài khoản" : "Tạo nhân viên"} onClose={onClose}><form className="form-stack" onSubmit={save}><Field label="Tên hiển thị"><input name="displayName" defaultValue={account?.displayName} required/></Field><Field label="Tên đăng nhập"><input name="username" defaultValue={account?.username} required/></Field><Field label="Email"><input name="email" type="email" defaultValue={account?.email} required/></Field>{!account && <Field label="Mật khẩu tạm"><input name="password" type="password" minLength={10} required/></Field>}<div className="modal-actions"><Button type="button" onClick={onClose}>Huỷ</Button><Button variant="primary">Lưu</Button></div></form></Modal>; }
+function PasswordModal({ account, reason, onClose }: { account: EmployeeAccount; reason: string; onClose: () => void }) { const { notify } = useWorkspace(); const save = async (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); try { requireReason(reason); const form = new FormData(e.currentTarget); await request(`/api/admin/users/${account.id}/reset-password`, { password: form.get("password"), reason }); notify("Đã đặt lại mật khẩu."); onClose(); } catch (error) { notify((error as Error).message); } }; return <Modal title={`Đặt lại mật khẩu · ${account.displayName}`} onClose={onClose}><form className="form-stack" onSubmit={save}><Field label="Mật khẩu mới"><input name="password" type="password" minLength={10} required/></Field><div className="modal-actions"><Button type="button" onClick={onClose}>Huỷ</Button><Button variant="primary">Đặt mật khẩu</Button></div></form></Modal>; }
+
+function CatalogsAdmin({ reason }: AdminProps) { const { notify } = useWorkspace(); const [data, setData] = useState<any>(null), [kind, setKind] = useState("districts"), [values, setValues] = useState(""); const load = () => request<any>("/api/admin/catalogs").then((x) => { setData(x); setValues((x.catalogs[kind] ?? []).join("\n")); }).catch((e) => notify(e.message)); useEffect(() => void load(), []); useEffect(() => { if (data) setValues((data.catalogs[kind] ?? []).join("\n")); }, [kind]); const save = async () => { try { requireReason(reason); await request(`/api/admin/catalogs/${kind}`, { values: values.split("\n").map((x) => x.trim()).filter(Boolean), reason, idempotencyKey: crypto.randomUUID() }, "PUT"); notify("Đã cập nhật danh mục."); await load(); } catch (error) { notify((error as Error).message); } }; const rename = async (oldValue: string) => { try { requireReason(reason); const newValue = prompt("Tên mới", oldValue)?.trim(); if (!newValue || newValue === oldValue) return; await request(`/api/admin/catalogs/${kind}/rename`, { oldValue, newValue, reason, idempotencyKey: crypto.randomUUID() }); notify("Đã đổi tên và cập nhật nơi đang sử dụng."); await load(); } catch (error) { notify((error as Error).message); } }; const labels: Record<string,string> = { districts: "Huyện / khu vực", visitDays: "Lịch ghé", storeTypes: "Loại cửa hiệu", routes: "Tuyến", brands: "Nhãn hiệu", groups: "Nhóm hàng", units: "Đơn vị", frequencies: "Tần suất" }; return <div className="admin-grid"><Card title="Danh mục dùng chung"><Field label="Loại danh mục"><select value={kind} onChange={(e) => setKind(e.target.value)}>{Object.entries(labels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field><Field label="Mỗi dòng một giá trị"><textarea rows={14} value={values} onChange={(e) => setValues(e.target.value)}/></Field><Button variant="primary" onClick={() => void save()}>Lưu danh mục</Button></Card><Card title="Mức sử dụng"><div className="summary-list">{data?.entries?.filter((x: any) => x.kind === kind).map((x: any) => <div key={x.id}><span>{x.value}</span><span><strong>{x.usage} nơi dùng</strong> <Button onClick={() => void rename(x.value)}>Đổi tên</Button></span></div>)}</div></Card></div>; }
+
+function ImportsAdmin(_: AdminProps) { const { notify } = useWorkspace(); const navigate = useNavigate(); const [rows, setRows] = useState<any>(null); useEffect(() => { void request<any>("/api/admin/imports?pageSize=100").then(setRows).catch((e) => notify(e.message)); }, []); return <Card title="Lịch sử nhập dữ liệu" actions={<Button variant="primary" onClick={() => navigate("/imports")}><Database size={15}/>Nhập dữ liệu</Button>}>{rows?.items?.length ? <div className="table-scroll"><table><thead><tr><th>Thời điểm</th><th>Tệp</th><th>Loại</th><th>Trạng thái</th><th>Kết quả</th></tr></thead><tbody>{rows.items.map((row: any) => <tr key={row.id}><td>{new Date(row.created_at).toLocaleString("vi-VN")}</td><td>{row.filename}</td><td>{row.kind}</td><td><Badge tone={row.status === "failed" ? "red" : row.status === "committed" ? "green" : "amber"}>{row.status}</Badge></td><td>{row.error_message || JSON.stringify(row.summary)}</td></tr>)}</tbody></table></div> : <Empty title="Chưa có lần nhập dữ liệu"/>}</Card>; }
+
+function AuditAdmin({ members }: AdminProps) { const { notify } = useWorkspace(); const [rows, setRows] = useState<any>(null), [q, setQ] = useState(""), [actor, setActor] = useState(""), [page, setPage] = useState(1), [detail, setDetail] = useState<any>(null); const load = () => request<any>(`/api/admin/audit?q=${encodeURIComponent(q)}&actorId=${actor}&page=${page}&pageSize=${pageSize}`).then(setRows).catch((e) => notify(e.message)); useEffect(() => void load(), [page]); const exportCsv = () => { if (!rows) return; download("nhat-ky-quan-tri.csv", ["Thời điểm,Người thao tác,Hành động,Lý do,Đối tượng", ...rows.entries.map((x: any) => [x.created_at, x.actor_name, x.action, x.reason, x.object_id || x.target_name].map((v: any) => `"${String(v ?? "").replaceAll('"','""')}"`).join(","))].join("\n"), "text/csv;charset=utf-8"); }; return <><Card title="Nhật ký quản trị" actions={<Button onClick={exportCsv}><Download size={15}/>Xuất CSV</Button>}><div className="toolbar"><SearchBox value={q} onChange={setQ} placeholder="Tìm theo lý do…"/><select value={actor} onChange={(e) => setActor(e.target.value)}><option value="">Mọi người thao tác</option>{members.map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}</select><Button onClick={() => { setPage(1); void load(); }}>Áp dụng</Button></div>{rows?.entries?.length ? <div className="table-scroll"><table><thead><tr><th>Thời điểm</th><th>Người thao tác</th><th>Hành động</th><th>Lý do</th><th>Đối tượng</th><th/></tr></thead><tbody>{rows.entries.map((row: any) => <tr key={row.id}><td>{new Date(row.created_at).toLocaleString("vi-VN")}</td><td>{row.actor_name}</td><td><strong>{row.action}</strong></td><td>{row.reason}</td><td>{row.object_id || row.target_name}</td><td><Button onClick={() => setDetail(row)}>Chi tiết</Button></td></tr>)}</tbody></table></div> : <Empty title="Chưa có nhật ký phù hợp"/>}{rows && <Pager page={page} count={rows.total} size={pageSize} onChange={setPage}/>}</Card>{detail && <Modal title="Chi tiết thay đổi" onClose={() => setDetail(null)} wide><div className="audit-detail"><p><strong>Hành động:</strong> {detail.action}</p><p><strong>Lý do:</strong> {detail.reason}</p><h3>Trước thay đổi</h3><pre>{JSON.stringify(detail.before_data ?? detail.details, null, 2)}</pre><h3>Sau thay đổi</h3><pre>{JSON.stringify(detail.after_data, null, 2)}</pre></div></Modal>}</>; }
+
+function SystemAdmin(_: AdminProps) { const { notify } = useWorkspace(); const [data, setData] = useState<any>(null); const load = () => request<any>("/api/admin/system/health").then(setData).catch((e) => notify(e.message)); useEffect(() => void load(), []); return <><Card title="Trạng thái hệ thống" actions={<Button onClick={load}><Activity size={15}/>Kiểm tra lại</Button>}>{data ? <div className="health-grid"><div><span>API</span><Badge tone={data.api === "ok" ? "green" : "red"}>{data.api}</Badge></div><div><span>Cơ sở dữ liệu</span><Badge tone={data.database === "ok" ? "green" : "red"}>{data.database}</Badge></div><div><span>Độ trễ DB</span><strong>{data.latencyMs} ms</strong></div><div><span>Phiên bản triển khai</span><code>{data.deployment}</code></div><div><span>Runtime</span><code>{data.runtime}</code></div><div><span>Đăng ký công khai</span><Badge tone="green">Đã tắt</Badge></div></div> : <div className="loading-row">Đang kiểm tra…</div>}</Card><Notice>Thông tin bí mật, mật khẩu và khóa Supabase không bao giờ được trả về màn hình này. Sao lưu và khôi phục được thực hiện trong Supabase theo quy trình vận hành có kiểm tra.</Notice></>; }

@@ -356,6 +356,11 @@ export function execute(
       "restoreOrder",
       "purgeOrder",
       "saveCatalog",
+      "deleteCustomer",
+      "restoreCustomer",
+      "purgeCustomer",
+      "mergeCustomer",
+      "renameCatalog",
     ].includes(command.type)
   )
     throw new DomainError(
@@ -403,10 +408,24 @@ export function execute(
       );
       const old = x.id ? found(s.products, x.id) : undefined;
       const before = old ? structuredClone(old) : null;
+      const code = String(x.code ?? "").trim();
+      assert(
+        !code ||
+          !!x.archived ||
+          !s.products.some(
+            (product) =>
+              product.id !== old?.id &&
+              !product.archived &&
+              product.code.trim().toLocaleLowerCase("vi") ===
+                code.toLocaleLowerCase("vi"),
+          ),
+        "Mã sản phẩm đang được sử dụng",
+        "DUPLICATE_PRODUCT_CODE",
+      );
       const item: Product = {
         id: old?.id ?? id(),
         name: x.name.trim(),
-        code: String(x.code ?? ""),
+        code,
         group: String(x.group ?? ""),
         brand: String(x.brand ?? ""),
         variant: String(x.variant ?? ""),
@@ -428,6 +447,7 @@ export function execute(
       const x = p.customer ?? p;
       assert(typeof x.name === "string" && x.name.trim(), "Cần tên khách hàng");
       const old = x.id ? found(s.customers, x.id) : undefined;
+      assert(!old?.deletedAt && !old?.mergedInto, "Khách hàng đang ở thùng rác hoặc đã được gộp", "CONFLICT");
       if (actor?.role === "employee") {
         assert(
           !x.archived,
@@ -480,6 +500,51 @@ export function execute(
       };
       if (old) Object.assign(old, item);
       else s.customers.push(item);
+      audit(s, command.type, item.id, JSON.stringify({ archived: item.archived }));
+      break;
+    }
+    case "deleteCustomer": {
+      assert(actor?.role === "admin", "Chỉ admin được xoá khách hàng", "FORBIDDEN");
+      const customer = found(s.customers, p.id);
+      assert(!customer.deletedAt && !customer.mergedInto, "Khách hàng không còn hoạt động", "CONFLICT");
+      const reason = String(p.reason ?? "").trim();
+      assert(reason.length >= 3, "Cần lý do xoá khách hàng");
+      customer.archived = true;
+      customer.deletedAt = actor.now ?? new Date().toISOString();
+      customer.deletedBy = actor.id;
+      customer.deletionReason = reason;
+      customer.updatedAt = customer.deletedAt;
+      audit(s, command.type, customer.id, reason);
+      break;
+    }
+    case "restoreCustomer": {
+      assert(actor?.role === "admin", "Chỉ admin được khôi phục khách hàng", "FORBIDDEN");
+      const customer = found(s.customers, p.id);
+      assert(customer.deletedAt && !customer.mergedInto, "Khách hàng không nằm trong thùng rác", "CONFLICT");
+      const reason = String(p.reason ?? "").trim();
+      assert(reason.length >= 3, "Cần lý do khôi phục khách hàng");
+      delete customer.deletedAt;
+      delete customer.deletedBy;
+      delete customer.deletionReason;
+      customer.archived = false;
+      customer.updatedAt = actor.now ?? new Date().toISOString();
+      audit(s, command.type, customer.id, reason);
+      break;
+    }
+    case "purgeCustomer": {
+      assert(actor?.role === "admin", "Chỉ admin được xoá vĩnh viễn khách hàng", "FORBIDDEN");
+      const customer = found(s.customers, p.id);
+      assert(customer.deletedAt && !customer.mergedInto, "Khách hàng phải nằm trong thùng rác", "CONFLICT");
+      assert(
+        !s.orders.some((order) => order.customerId === customer.id) &&
+          !s.visits.some((visit) => visit.customerId === customer.id),
+        "Khách hàng còn lịch sử nên không thể xoá vĩnh viễn",
+        "CUSTOMER_HAS_HISTORY",
+      );
+      const reason = String(p.reason ?? "").trim();
+      assert(reason.length >= 3, "Cần lý do xoá vĩnh viễn");
+      s.customers = s.customers.filter((item) => item.id !== customer.id);
+      audit(s, command.type, customer.id, reason);
       break;
     }
     case "saveCatalog": {
@@ -525,6 +590,27 @@ export function execute(
         "Cần đủ huyện, loại cửa hiệu và Thứ Hai đến Thứ Bảy",
       );
       s.catalogs = next;
+      break;
+    }
+    case "renameCatalog": {
+      assert(actor?.role === "admin", "Chỉ admin được đổi tên danh mục", "FORBIDDEN");
+      const kind = String(p.kind ?? "") as keyof typeof defaultCatalogs;
+      const oldValue = String(p.oldValue ?? "").trim();
+      const newValue = String(p.newValue ?? "").trim();
+      const reason = String(p.reason ?? "").trim();
+      const catalogs = s.catalogs ?? structuredClone(defaultCatalogs);
+      assert(kind in catalogs && catalogs[kind].includes(oldValue), "Không tìm thấy mục danh mục");
+      assert(newValue && newValue.length <= 120 && reason.length >= 3, "Tên mới hoặc lý do không hợp lệ");
+      assert(!catalogs[kind].includes(newValue), "Tên danh mục mới đã tồn tại");
+      catalogs[kind] = catalogs[kind].map((value) => value === oldValue ? newValue : value) as never;
+      const customerFields: Partial<Record<keyof typeof defaultCatalogs, "district"|"storeType"|"route"|"frequency">> = { districts: "district", storeTypes: "storeType", routes: "route", frequencies: "frequency" };
+      const productFields: Partial<Record<keyof typeof defaultCatalogs, "brand"|"group"|"unit">> = { brands: "brand", groups: "group", units: "unit" };
+      const customerField = customerFields[kind];
+      if (customerField) for (const customer of s.customers) if (customer[customerField] === oldValue) customer[customerField] = newValue;
+      const productField = productFields[kind];
+      if (productField) for (const product of s.products) if (product[productField] === oldValue) product[productField] = newValue;
+      s.catalogs = catalogs;
+      audit(s, command.type, `${kind}:${oldValue}`, JSON.stringify({ newValue, reason }));
       break;
     }
     case "saveOrder": {
@@ -578,7 +664,7 @@ export function execute(
         }
       }
       orderValues(o);
-      assert(o.margin !== null, "C?n b? sung gi? v?n h?ng/qu? tr??c khi ch?t");
+      assert(o.margin !== null, "Cần bổ sung giá vốn hàng/quà trước khi chốt");
       stockCheck(s, o.lines, o.id);
       reserveOrder(s, o);
       o.status = "confirmed";

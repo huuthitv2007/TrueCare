@@ -18,6 +18,7 @@ export interface EmployeeAccount {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+  lastLoginAt?: string | null;
 }
 export interface TeamMember extends EmployeeAccount {
   summary: AppState["summary"];
@@ -62,6 +63,10 @@ export interface Customer {
   createdAt?: string;
   updatedAt?: string;
   legacyLocked?: boolean;
+  deletedAt?: string;
+  deletedBy?: string;
+  deletionReason?: string;
+  mergedInto?: string;
 }
 export interface OrderLine {
   id: string;
@@ -219,6 +224,7 @@ export interface Settings {
 export interface AppState {
   version: number;
   sharedVersion?: number;
+  inventoryVersion?: number;
   catalogs?: Catalogs;
   products: Product[];
   customers: Customer[];
@@ -264,4 +270,5 @@ export interface Command {
   idempotencyKey: string;
   version?: number;
   sharedVersion?: number;
+  inventoryVersion?: number;
 }

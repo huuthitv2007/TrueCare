@@ -11,6 +11,7 @@ export interface AccountRow {
   created_at: string;
   updated_at: string;
   session_valid_after?: string;
+  last_login_at?: string | null;
 }
 export function normalizeUsername(value: unknown) {
   const username = String(value ?? "")

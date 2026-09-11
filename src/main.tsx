@@ -128,6 +128,7 @@ function Application() {
         idempotencyKey: crypto.randomUUID(),
         version: state.version,
         sharedVersion: state.sharedVersion,
+        inventoryVersion: state.inventoryVersion,
       };
       if (adminTarget) {
         if (adminReason.trim().length < 3)
@@ -339,7 +340,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route
-              path="/admin"
+              path="/admin/*"
               element={
                 user.role === "admin" ? (
                   <AdminConsole />
