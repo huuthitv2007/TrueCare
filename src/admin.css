@@ -1,4 +1,4 @@
-.admin-target{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 18px;padding:12px 14px;background:#fff3db;border:1px solid #efc76a;border-radius:8px;color:#714c08}.admin-target input{flex:1;min-width:240px;background:#fffdf8}.admin-target button{border:0;background:transparent;color:#8d4c14;font-weight:700;padding:7px}
+.admin-target{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 18px;padding:12px 14px;background:var(--tc-warning-bg);border:1px solid color-mix(in srgb,var(--tc-warning) 45%,var(--tc-border));border-radius:8px;color:var(--tc-warning)}.admin-target input{flex:1;min-width:240px;background:var(--tc-input)}.admin-target button{border:0;background:transparent;color:var(--tc-warning);font-weight:700;padding:7px}
 .admin-reason-card{display:flex;align-items:end;gap:16px;margin-bottom:14px;background:var(--tc-warning-bg)}
 .admin-reason-card .field{flex:1;margin:0}.admin-reason-card small{max-width:440px;color:var(--tc-muted)}
 .admin-nav{display:flex;gap:7px;overflow-x:auto;padding:4px 2px 14px;margin-bottom:4px;scrollbar-width:thin}

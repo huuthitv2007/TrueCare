@@ -14,8 +14,8 @@ import {
   BookOpenCheck,
   Boxes,
   CalendarDays,
-  ChevronUp,
   CircleDollarSign,
+  CloudCheck,
   ClipboardList,
   FileSpreadsheet,
   Home,
@@ -223,27 +223,63 @@ function Application() {
   );
 }
 function Workspace({ onLogout }: { onLogout: () => void }) {
-  const [menu, setMenu] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
   const {
     state,
     command,
+    notify,
     user,
     adminTarget,
     setAdminTarget,
     adminReason,
     setAdminReason,
   } = useWorkspace();
-  useEffect(() => {
-    setTheme(state.settings.theme);
-  }, [state.settings.theme]);
+  const [menu, setMenu] = useState(false);
+  const [compactNavigation, setCompactNavigation] = useState(
+    () => window.matchMedia("(max-width: 1023px)").matches,
+  );
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const remembered = localStorage.getItem(`truecare-theme:${user.id}`);
+    return remembered === "light" || remembered === "dark"
+      ? remembered
+      : state.settings.theme;
+  });
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-  }, [theme]);
+    localStorage.setItem("truecare-theme", theme);
+    localStorage.setItem(`truecare-theme:${user.id}`, theme);
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", theme === "dark" ? "#0b0e16" : "#102A5B");
+  }, [theme, user.id]);
+  useEffect(() => {
+    document.body.classList.toggle("menu-open", menu);
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => {
+      document.body.classList.remove("menu-open");
+      window.removeEventListener("keydown", close);
+    };
+  }, [menu]);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1023px)");
+    const update = () => {
+      setCompactNavigation(media.matches);
+      if (!media.matches) setMenu(false);
+    };
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
   const switchTheme = async () => {
     const next = theme === "light" ? "dark" : "light";
     setTheme(next);
-    await command("updateSettings", { theme: next });
+    try {
+      if (!adminTarget) await command("updateSettings", { theme: next });
+    } catch (error) {
+      setTheme(theme);
+      notify((error as Error).message);
+    }
   };
   const items =
     user.role === "admin"
@@ -251,7 +287,19 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       : nav;
   return (
     <div className="app-shell">
-      <aside className={`sidebar ${menu ? "open" : ""}`}>
+      {menu && (
+        <button
+          className="menu-backdrop"
+          aria-label="Đóng menu"
+          onClick={() => setMenu(false)}
+        />
+      )}
+      <aside
+        id="primary-navigation"
+        className={`sidebar ${menu ? "open" : ""}`}
+        aria-hidden={compactNavigation && !menu}
+        inert={compactNavigation && !menu ? true : undefined}
+      >
         <div className="sidebar-brand">
           <Leaf size={22} /> <span>TrueCare</span>
         </div>
@@ -297,11 +345,41 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         </div>
       </aside>
       <main className="main">
+        <header className="desktop-header">
+          <div className="operational-mark">
+            <span className="sync-dot" />
+            <span>TRUECARE COMMERCIAL ENGINE</span>
+          </div>
+          <div className="desktop-header-actions">
+            <span className="sync-chip">
+              <CloudCheck size={16} /> Dữ liệu đã đồng bộ
+            </span>
+            <button
+              className="header-theme-switch"
+              onClick={() => void switchTheme()}
+              aria-label={`Chuyển sang giao diện ${theme === "light" ? "tối" : "sáng"}`}
+              title={`Chuyển sang giao diện ${theme === "light" ? "tối" : "sáng"}`}
+            >
+              {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+            </button>
+            <div className="header-profile">
+              <span>
+                <strong>{user.displayName}</strong>
+                <small>
+                  {user.role === "admin" ? "Quản trị viên" : `@${user.username}`}
+                </small>
+              </span>
+              <div className="avatar">{user.displayName.slice(0, 1)}</div>
+            </div>
+          </div>
+        </header>
         <header className="mobile-header">
           <button
             className="icon-button"
             onClick={() => setMenu(!menu)}
             aria-label="Mở menu"
+            aria-controls="primary-navigation"
+            aria-expanded={menu}
           >
             <Menu />
           </button>
@@ -310,9 +388,10 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           </strong>
           <button
             className="icon-button"
-            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            onClick={() => void switchTheme()}
+            aria-label={`Chuyển sang giao diện ${theme === "light" ? "tối" : "sáng"}`}
           >
-            <ChevronUp />
+            {theme === "light" ? <Moon /> : <Sun />}
           </button>
         </header>
         <div className="content">
@@ -372,6 +451,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
     </div>
   );
 }
+
 function Dashboard() {
   const { state } = useWorkspace();
   const navigate = useNavigate();
