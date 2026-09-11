@@ -3,7 +3,7 @@ services:
     name: truecare-employee
     runtime: node
     region: singapore
-    plan: free
+    plan: 0.5c-512mb
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run start:production
     healthCheckPath: /api/health
