@@ -1,6 +1,6 @@
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { previewPrograms, DomainError, assert } from "./domain.js";
 import { createSupabaseAdapter } from "./supabase-adapter.js";
@@ -81,7 +81,7 @@ const previews = new Map<
 >();
 type Session = { token: string; user: User; account: AccountRow };
 const accountFields =
-  "user_id,email,username,display_name,role,active,created_at,updated_at,session_valid_after,last_login_at";
+  "user_id,email,username,display_name,role,active,created_at,updated_at,session_valid_after,last_login_at,deleted_at,deleted_by,active_before_delete";
 app.disable("x-powered-by");
 app.use(express.json({ limit: "14mb" }));
 app.use((req, res, next) => {
@@ -126,6 +126,9 @@ const asAccount = (row: any): AccountRow => ({
   updated_at: row.updated_at,
   session_valid_after: row.session_valid_after,
   last_login_at: row.last_login_at,
+  deleted_at: row.deleted_at,
+  deleted_by: row.deleted_by,
+  active_before_delete: row.active_before_delete,
 });
 const accountOf = async (userId: string) => {
   const { data, error } = await admin
@@ -225,6 +228,9 @@ const employeeAccount = (row: AccountRow): EmployeeAccount => ({
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   lastLoginAt: row.last_login_at ?? null,
+  deletedAt: row.deleted_at ?? null,
+  deletedBy: row.deleted_by ?? null,
+  activeBeforeDelete: row.active_before_delete ?? null,
 });
 async function resolveLogin(value: unknown) {
   const login = String(value ?? "")
@@ -390,6 +396,115 @@ async function executeAdminCommand(
     },
     { id: actor.id, role: "admin" },
   );
+}
+
+type BulkAction = "trash" | "restore" | "purge";
+type BulkResource = "customers" | "orders" | "products" | "users";
+type BulkResult = {
+  id: string;
+  ownerId?: string;
+  status: "success" | "skipped";
+  message: string;
+};
+const accountHasHistory = (state: AppState) =>
+  state.orders.length > 0 ||
+  state.deliveries.length > 0 ||
+  state.returns.length > 0 ||
+  state.payments.length > 0 ||
+  state.ledger.length > 0 ||
+  state.programs.length > 0 ||
+  state.inventoryMovements.length > 0 ||
+  state.audit.length > 0 ||
+  state.imports.length > 0;
+async function activeAdminCount() {
+  const rows = await admin
+    .from("employee_accounts")
+    .select("user_id", { count: "exact", head: true })
+    .eq("role", "admin")
+    .eq("active", true)
+    .is("deleted_at", null);
+  if (rows.error)
+    throw new DomainError("STORAGE", "Không kiểm tra được tài khoản quản trị", 503);
+  return rows.count ?? 0;
+}
+async function trashAccount(target: AccountRow, actor: User) {
+  assert(!target.deleted_at, "Tài khoản đã nằm trong thùng rác", "CONFLICT");
+  assert(target.user_id !== actor.id, "Không thể tự xoá tài khoản quản trị");
+  if (target.role === "admin")
+    assert((await activeAdminCount()) > 1, "Không thể xoá quản trị viên cuối cùng");
+  const now = new Date().toISOString();
+  const updated = await admin
+    .from("employee_accounts")
+    .update({
+      active: false,
+      active_before_delete: target.active,
+      deleted_at: now,
+      deleted_by: actor.id,
+      session_valid_after: now,
+      updated_at: now,
+    })
+    .eq("user_id", target.user_id)
+    .is("deleted_at", null);
+  if (updated.error)
+    throw new DomainError("STORAGE", "Không chuyển được tài khoản vào thùng rác", 503);
+  const authUpdate = await admin.auth.admin.updateUserById(target.user_id, {
+    ban_duration: "876000h",
+  });
+  if (authUpdate.error) {
+    await admin.from("employee_accounts").update({
+      active: target.active,
+      active_before_delete: target.active_before_delete ?? null,
+      deleted_at: target.deleted_at ?? null,
+      deleted_by: target.deleted_by ?? null,
+      session_valid_after: target.session_valid_after,
+      updated_at: target.updated_at,
+    }).eq("user_id", target.user_id);
+    throw new DomainError("AUTH", "Không thể khóa tài khoản trên Supabase", 503);
+  }
+}
+async function restoreAccount(target: AccountRow) {
+  assert(target.deleted_at, "Tài khoản không nằm trong thùng rác", "CONFLICT");
+  const active = target.active_before_delete ?? true;
+  const updated = await admin
+    .from("employee_accounts")
+    .update({
+      active,
+      active_before_delete: null,
+      deleted_at: null,
+      deleted_by: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", target.user_id)
+    .not("deleted_at", "is", null);
+  if (updated.error)
+    throw new DomainError("STORAGE", "Không khôi phục được tài khoản", 503);
+  const authUpdate = await admin.auth.admin.updateUserById(target.user_id, {
+    ban_duration: active ? "none" : "876000h",
+  });
+  if (authUpdate.error) {
+    await admin.from("employee_accounts").update({
+      active: false,
+      active_before_delete: target.active_before_delete,
+      deleted_at: target.deleted_at,
+      deleted_by: target.deleted_by,
+      updated_at: target.updated_at,
+    }).eq("user_id", target.user_id);
+    throw new DomainError("AUTH", "Không thể khôi phục tài khoản trên Supabase", 503);
+  }
+}
+async function purgeAccount(target: AccountRow, actor: User) {
+  assert(target.deleted_at, "Tài khoản phải nằm trong thùng rác", "CONFLICT");
+  assert(target.user_id !== actor.id, "Không thể tự xoá tài khoản quản trị");
+  if (target.role === "admin")
+    assert((await activeAdminCount()) > 1, "Không thể xoá quản trị viên cuối cùng");
+  assert(
+    !accountHasHistory(await store.getStateForOwner(target.user_id)),
+    "Tài khoản còn dữ liệu nghiệp vụ nên không thể xoá vĩnh viễn",
+    "ACCOUNT_HAS_HISTORY",
+  );
+  const removed = await admin.auth.admin.deleteUser(target.user_id);
+  if (removed.error)
+    throw new DomainError("AUTH", "Không xoá được tài khoản", 503);
 }
 async function commitImport(
   owner: string,
@@ -901,10 +1016,17 @@ app.get(
     const q = String(req.query.q ?? "").toLocaleLowerCase("vi");
     const status = String(req.query.status ?? "active");
     const rows = products
-      .filter((product) =>
-        (status === "all" || (status === "archived") === !!product.archived) &&
-        (!q || [product.code, product.name, product.brand, product.group].join(" ").toLocaleLowerCase("vi").includes(q)),
-      )
+      .filter((product) => {
+        const currentStatus = product.deletedAt
+          ? "deleted"
+          : product.archived
+            ? "archived"
+            : "active";
+        return (
+          (status === "all" || status === currentStatus) &&
+          (!q || [product.code, product.name, product.brand, product.group].join(" ").toLocaleLowerCase("vi").includes(q))
+        );
+      })
       .map((product) => ({
         ...product,
         scheduled:
@@ -1154,6 +1276,7 @@ app.post(
   route(async (req, res) => {
     const session = res.locals.session as Session;
     const target = await accountOf(String(req.params.userId));
+    assert(!target.deleted_at, "Tài khoản đang nằm trong thùng rác", "CONFLICT");
     const reason = reasonOf(req.body.reason);
     const command = req.body.command as Command;
     assert(
@@ -1229,6 +1352,7 @@ app.patch(
   route(async (req, res) => {
     const session = res.locals.session as Session;
     const target = await accountOf(String(req.params.userId));
+    assert(!target.deleted_at, "Tài khoản đang nằm trong thùng rác", "CONFLICT");
     const reason = reasonOf(req.body.reason);
     const username =
       req.body.username === undefined
@@ -1312,6 +1436,7 @@ app.post(
   route(async (req, res) => {
     const session = res.locals.session as Session;
     const target = await accountOf(String(req.params.userId));
+    assert(!target.deleted_at, "Tài khoản đang nằm trong thùng rác", "CONFLICT");
     const reason = reasonOf(req.body.reason);
     const password = validateEmployeePassword(req.body.password);
     const result = await admin.auth.admin.updateUserById(target.user_id, {
@@ -1334,6 +1459,7 @@ app.post(
   route(async (req, res) => {
     const session = res.locals.session as Session;
     const target = await accountOf(String(req.params.userId));
+    assert(!target.deleted_at, "Tài khoản đang nằm trong thùng rác", "CONFLICT");
     const reason = reasonOf(req.body.reason);
     const sessionValidAfter = await revokeSessions(target.user_id);
     await logAdmin(session.user.id, target.user_id, "revoke_sessions", reason, {
@@ -1349,41 +1475,129 @@ app.delete(
   route(async (req, res) => {
     const session = res.locals.session as Session;
     const target = await accountOf(String(req.params.userId));
-    assert(
-      target.user_id !== session.user.id,
-      "Không thể tự xóa tài khoản quản trị",
-    );
-    if (target.role === "admin") {
-      const activeAdmins = await admin
-        .from("employee_accounts")
-        .select("user_id", { count: "exact", head: true })
-        .eq("role", "admin")
-        .eq("active", true);
-      assert((activeAdmins.count ?? 0) > 1, "Không thể xóa quản trị viên cuối cùng");
-    }
     const reason = reasonOf(req.body.reason);
-    const state = await store.getStateForOwner(target.user_id);
-    const hasHistory =
-      state.orders.length > 0 ||
-      state.deliveries.length > 0 ||
-      state.returns.length > 0 ||
-      state.payments.length > 0 ||
-      state.ledger.length > 0 ||
-      state.inventoryMovements.length > 0 ||
-      state.audit.length > 0 ||
-      state.imports.length > 0;
-    assert(
-      !hasHistory,
-      "Tài khoản đã có giao dịch; hãy khóa tài khoản để giữ lịch sử",
-      "ACCOUNT_HAS_HISTORY",
-    );
-    const result = await admin.auth.admin.deleteUser(target.user_id);
-    if (result.error)
-      throw new DomainError("AUTH", "Không xóa được tài khoản", 400);
-    await logAdmin(session.user.id, target.user_id, "delete_employee", reason, {
+    await trashAccount(target, session.user);
+    await logAdmin(session.user.id, target.user_id, "trash_employee", reason, {
       username: target.username,
     });
-    res.json({ ok: true });
+    res.json({ ok: true, status: "trash" });
+  }),
+);
+
+app.post(
+  "/api/admin/:resource/bulk-actions",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    const resource = String(req.params.resource) as BulkResource;
+    const action = String(req.body.action) as BulkAction;
+    const reason = reasonOf(req.body.reason);
+    const key = String(req.body.idempotencyKey ?? req.header("x-idempotency-key") ?? "");
+    const rawItems = req.body.items;
+    assert(["customers", "orders", "products", "users"].includes(resource), "Loại dữ liệu không hỗ trợ");
+    assert(["trash", "restore", "purge"].includes(action), "Thao tác không hỗ trợ");
+    assert(typeof key === "string" && key.length >= 8 && key.length <= 200, "Cần khóa chống gửi lặp");
+    assert(Array.isArray(rawItems) && rawItems.length >= 1 && rawItems.length <= 25, "Mỗi lần chọn từ 1 đến 25 dòng");
+    const items = rawItems.map((item: any) => ({
+      id: String(item?.id ?? item),
+      ownerId: item?.ownerId == null ? undefined : String(item.ownerId),
+    }));
+    assert(items.every((item) => item.id && (resource !== "orders" || item.ownerId)), "Dữ liệu lựa chọn không hợp lệ");
+    assert(new Set(items.map((item) => `${item.ownerId ?? ""}:${item.id}`)).size === items.length, "Danh sách có dòng trùng");
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify({ actor: session.user.id, resource, action, items, reason }))
+      .digest("hex");
+    const receipt = await admin
+      .from("admin_bulk_operations")
+      .select("fingerprint,status,result")
+      .eq("request_id", key)
+      .maybeSingle();
+    if (receipt.error)
+      throw new DomainError("STORAGE", "Không kiểm tra được khóa chống gửi lặp", 503);
+    if (receipt.data) {
+      assert(receipt.data.fingerprint === fingerprint, "Khóa chống gửi lặp đã dùng cho dữ liệu khác", "CONFLICT");
+      assert(receipt.data.status === "complete", "Thao tác này đang được xử lý", "CONFLICT");
+      res.json(receipt.data.result);
+      return;
+    }
+    const started = await admin.from("admin_bulk_operations").insert({
+      request_id: key,
+      actor_id: session.user.id,
+      resource,
+      action,
+      fingerprint,
+      status: "processing",
+    });
+    if (started.error) {
+      if (started.error.code === "23505")
+        throw new DomainError("CONFLICT", "Thao tác này đang được xử lý", 409);
+      throw new DomainError("STORAGE", "Không bắt đầu được thao tác hàng loạt", 503);
+    }
+    const results: BulkResult[] = [];
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      try {
+        let before: unknown;
+        let after: unknown;
+        if (resource === "customers") {
+          const type = action === "trash" ? "deleteCustomer" : action === "restore" ? "restoreCustomer" : "purgeCustomer";
+          const current = await store.getStateForOwner(session.user.id);
+          before = current.customers.find((customer) => customer.id === item.id);
+          if (action === "purge") {
+            const usage = customerUsage(await ownedStates(), item.id);
+            assert(usage.orders === 0 && usage.visits === 0, "Khách hàng còn lịch sử nên không thể xoá vĩnh viễn", "CUSTOMER_HAS_HISTORY");
+          }
+          const next = await executeAdminCommand(session.user.id, session.user, type, { id: item.id, reason }, `${key}:${index}`);
+          after = next.customers.find((customer) => customer.id === item.id);
+        } else if (resource === "products") {
+          const type = action === "trash" ? "deleteProduct" : action === "restore" ? "restoreProduct" : "purgeProduct";
+          const current = await store.getStateForOwner(session.user.id);
+          before = current.products.find((product) => product.id === item.id);
+          const next = await executeAdminCommand(session.user.id, session.user, type, { id: item.id, reason }, `${key}:${index}`);
+          after = next.products.find((product) => product.id === item.id);
+        } else if (resource === "orders") {
+          const type = action === "trash" ? "deleteOrder" : action === "restore" ? "restoreOrder" : "purgeOrder";
+          const current = await store.getStateForOwner(item.ownerId!);
+          before = current.orders.find((order) => order.id === item.id);
+          const next = await executeAdminCommand(item.ownerId!, session.user, type, { id: item.id, reason }, `${key}:${index}`);
+          after = next.orders.find((order) => order.id === item.id);
+        } else {
+          const target = await accountOf(item.id);
+          before = employeeAccount(target);
+          if (action === "trash") await trashAccount(target, session.user);
+          else if (action === "restore") await restoreAccount(target);
+          else await purgeAccount(target, session.user);
+          after = action === "purge" ? null : employeeAccount(await accountOf(item.id));
+        }
+        await logAdmin(session.user.id, resource === "orders" ? item.ownerId! : resource === "users" && action !== "purge" ? item.id : null, `${action}_${resource}`, reason, {}, {
+          requestId: `${key}:${index}`,
+          objectType: resource,
+          objectId: item.id,
+          before,
+          after,
+        });
+        results.push({ ...item, status: "success", message: action === "trash" ? "Đã chuyển vào thùng rác" : action === "restore" ? "Đã khôi phục" : "Đã xoá vĩnh viễn" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Không thực hiện được";
+        await logAdmin(session.user.id, null, `${action}_${resource}_blocked`, reason, { message, ownerId: item.ownerId }, {
+          requestId: `${key}:${index}:blocked`,
+          objectType: resource,
+          objectId: item.id,
+        });
+        results.push({ ...item, status: "skipped", message });
+      }
+    }
+    const result = {
+      successCount: results.filter((item) => item.status === "success").length,
+      skippedCount: results.filter((item) => item.status === "skipped").length,
+      results,
+    };
+    const completed = await admin
+      .from("admin_bulk_operations")
+      .update({ status: "complete", result, completed_at: new Date().toISOString() })
+      .eq("request_id", key);
+    if (completed.error)
+      throw new DomainError("STORAGE", "Đã xử lý dữ liệu nhưng chưa lưu được biên nhận", 503);
+    res.json(result);
   }),
 );
 app.post(

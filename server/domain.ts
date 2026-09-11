@@ -352,6 +352,9 @@ export function execute(
     actor?.role === "employee" &&
     [
       "saveProduct",
+      "deleteProduct",
+      "restoreProduct",
+      "purgeProduct",
       "adjustInventory",
       "restoreOrder",
       "purgeOrder",
@@ -407,6 +410,7 @@ export function execute(
         "Giá không được âm",
       );
       const old = x.id ? found(s.products, x.id) : undefined;
+      assert(!old?.deletedAt, "Sản phẩm đang nằm trong thùng rác", "CONFLICT");
       const before = old ? structuredClone(old) : null;
       const code = String(x.code ?? "").trim();
       assert(
@@ -441,6 +445,66 @@ export function execute(
       if (old) Object.assign(old, item);
       else s.products.push(item);
       audit(s, command.type, item.id, JSON.stringify({ before, after: item }));
+      break;
+    }
+    case "deleteProduct": {
+      assert(actor?.role === "admin", "Chỉ admin được xoá sản phẩm", "FORBIDDEN");
+      const product = found(s.products, p.id);
+      assert(!product.deletedAt, "Sản phẩm đã nằm trong thùng rác", "CONFLICT");
+      const reason = String(p.reason ?? "").trim();
+      assert(reason.length >= 3, "Cần lý do xoá sản phẩm");
+      product.archivedBeforeDelete = !!product.archived;
+      product.archived = true;
+      product.deletedAt = actor.now ?? new Date().toISOString();
+      product.deletedBy = actor.id;
+      product.deletionReason = reason;
+      audit(s, command.type, product.id, reason);
+      break;
+    }
+    case "restoreProduct": {
+      assert(actor?.role === "admin", "Chỉ admin được khôi phục sản phẩm", "FORBIDDEN");
+      const product = found(s.products, p.id);
+      assert(product.deletedAt, "Sản phẩm không nằm trong thùng rác", "CONFLICT");
+      const reason = String(p.reason ?? "").trim();
+      assert(reason.length >= 3, "Cần lý do khôi phục sản phẩm");
+      if (!product.archivedBeforeDelete && product.code)
+        assert(
+          !s.products.some(
+            (item) =>
+              item.id !== product.id &&
+              !item.archived &&
+              !item.deletedAt &&
+              item.code.trim().toLocaleLowerCase("vi") ===
+                product.code.trim().toLocaleLowerCase("vi"),
+          ),
+          "Mã sản phẩm đang được một sản phẩm khác sử dụng",
+          "DUPLICATE_PRODUCT_CODE",
+        );
+      product.archived = product.archivedBeforeDelete ?? false;
+      delete product.deletedAt;
+      delete product.deletedBy;
+      delete product.deletionReason;
+      delete product.archivedBeforeDelete;
+      audit(s, command.type, product.id, reason);
+      break;
+    }
+    case "purgeProduct": {
+      assert(actor?.role === "admin", "Chỉ admin được xoá vĩnh viễn sản phẩm", "FORBIDDEN");
+      const product = found(s.products, p.id);
+      assert(product.deletedAt, "Sản phẩm phải nằm trong thùng rác", "CONFLICT");
+      assert(
+        !s.orders.some((order) => order.lines.some((line) => line.productId === product.id)) &&
+          !s.programs.some((program) => program.lines.some((line) => line.productId === product.id)) &&
+          !s.inventoryMovements.some((movement) => movement.productId === product.id) &&
+          !s.inventory.some((stock) => stock.productId === product.id && stock.quantity !== 0),
+        "Sản phẩm còn toa, chương trình hoặc lịch sử kho nên không thể xoá vĩnh viễn",
+        "PRODUCT_HAS_HISTORY",
+      );
+      const reason = String(p.reason ?? "").trim();
+      assert(reason.length >= 3, "Cần lý do xoá vĩnh viễn");
+      s.products = s.products.filter((item) => item.id !== product.id);
+      s.inventory = s.inventory.filter((item) => item.productId !== product.id);
+      audit(s, command.type, product.id, reason);
       break;
     }
     case "saveCustomer": {

@@ -12,6 +12,9 @@ export interface AccountRow {
   updated_at: string;
   session_valid_after?: string;
   last_login_at?: string | null;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  active_before_delete?: boolean | null;
 }
 export function normalizeUsername(value: unknown) {
   const username = String(value ?? "")

@@ -98,7 +98,7 @@ export function dashboardOf(states: OwnedState[], products: Product[]) {
         Date.parse(x.expiresAt) <= now + 7 * 86_400_000,
     ).length,
     duplicateCustomers: duplicateCustomers(states[0]?.state.customers ?? []).length,
-    productsNeedingReview: products.filter((x) => x.needsReview).length,
+    productsNeedingReview: products.filter((x) => !x.deletedAt && x.needsReview).length,
   };
 }
 

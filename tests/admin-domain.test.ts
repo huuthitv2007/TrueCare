@@ -120,3 +120,49 @@ test("không xóa vĩnh viễn khách hàng còn lịch sử toa", () => {
     /còn lịch sử/i,
   );
 });
+
+test("sản phẩm vào thùng rác, khôi phục đúng trạng thái và chỉ purge khi không còn lịch sử", () => {
+  let state = emptyState();
+  state = command(state, "saveProduct", {
+    name: "Sản phẩm chưa dùng",
+    code: "TC-TRASH-1",
+    pack: 12,
+    archived: false,
+  });
+  const productId = state.products[0].id;
+  state = command(state, "deleteProduct", { id: productId, reason: "Dọn sản phẩm thử" });
+  assert.ok(state.products[0].deletedAt);
+  assert.equal(state.products[0].archived, true);
+  assert.equal(state.products[0].archivedBeforeDelete, false);
+  state = command(state, "restoreProduct", { id: productId, reason: "Khôi phục sản phẩm" });
+  assert.equal(state.products[0].deletedAt, undefined);
+  assert.equal(state.products[0].archived, false);
+  state = command(state, "deleteProduct", { id: productId, reason: "Xoá sản phẩm lần cuối" });
+  state = command(state, "purgeProduct", { id: productId, reason: "Không còn tham chiếu" });
+  assert.equal(state.products.length, 0);
+});
+
+test("không purge sản phẩm còn toa, chương trình, biến động kho hoặc tồn khác không", () => {
+  const blockers = ["order", "program", "movement", "stock"] as const;
+  for (const blocker of blockers) {
+    let state = emptyState();
+    state = command(state, "saveProduct", { name: `Sản phẩm ${blocker}`, code: `TC-${blocker}`, pack: 1 });
+    const productId = state.products[0].id;
+    if (blocker === "order") state.orders.push({ id: "o", code: "O", customerId: "c", date: "2026-09-11", notes: "", status: "draft", lines: [{ id: "l", productId, name: "SP", quantity: 1, price: "0", cost: "0", ceiling: "0", pack: 1, unit: "chai", kind: "sale", sponsor: "employee", discount: "0", delivered: 0, returned: 0 }], total: "0", margin: "0", reserved: "0", version: 1 });
+    if (blocker === "program") state.programs.push({ id: "p", name: "P", mode: "single", lines: [{ id: "l", productId, name: "SP", quantity: 1, price: "0", cost: "0", ceiling: "0", pack: 1, unit: "chai", kind: "sale", sponsor: "employee", discount: "0", delivered: 0, returned: 0 }], count: 1, remaining: 1, price: "0", margin: "0", subsidy: "0", reserved: "0", guaranteeStock: false, status: "active", expiresAt: "2026-09-12", seed: 1 });
+    if (blocker === "movement") state.inventoryMovements.push({ id: "m", productId, date: "2026-09-11", quantity: 1, reason: "Nhập", referenceId: "r" });
+    if (blocker === "stock") state.inventory.push({ productId, quantity: 1, tracked: true, updatedAt: "2026-09-11T00:00:00Z", source: "Kho" });
+    state = command(state, "deleteProduct", { id: productId, reason: "Đưa vào thùng rác" });
+    assert.throws(() => command(state, "purgeProduct", { id: productId, reason: "Xoá vĩnh viễn" }), /còn toa|lịch sử kho/i);
+  }
+});
+
+test("nhân viên không thể xoá, khôi phục hoặc purge sản phẩm", () => {
+  let state = emptyState();
+  state = command(state, "saveProduct", { name: "Sản phẩm quyền", code: "TC-RBAC", pack: 1 });
+  for (const type of ["deleteProduct", "restoreProduct", "purgeProduct"])
+    assert.throws(
+      () => command(state, type, { id: state.products[0].id, reason: "Không có quyền" }, "employee"),
+      /quản trị viên/i,
+    );
+});

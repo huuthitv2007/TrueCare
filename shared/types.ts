@@ -19,6 +19,9 @@ export interface EmployeeAccount {
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string | null;
+  deletedAt?: string | null;
+  deletedBy?: string | null;
+  activeBeforeDelete?: boolean | null;
 }
 export interface TeamMember extends EmployeeAccount {
   summary: AppState["summary"];
@@ -40,6 +43,10 @@ export interface Product {
   archived?: boolean;
   sourceOwner?: string;
   needsReview?: boolean;
+  deletedAt?: string;
+  deletedBy?: string;
+  deletionReason?: string;
+  archivedBeforeDelete?: boolean;
 }
 export interface Customer {
   id: string;
