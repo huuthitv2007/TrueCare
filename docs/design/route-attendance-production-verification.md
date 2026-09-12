@@ -26,6 +26,13 @@ Ngày kiểm tra: 13/09/2026. Website: https://truecare-employee.onrender.com.
 | Protected routes ẩn danh | `/programs`, `/route-schedule`, `/admin` trả shell đăng nhập, không lộ màn hình nghiệp vụ |
 | Console/tài nguyên | Không ghi nhận lỗi console hoặc tài nguyên 404 trong public smoke |
 
+## Firecrawl public verification
+
+- Firecrawl scrape `/login`: HTTP 200, title `Đăng nhập · TrueCare`, logo `truecare-logo.png`, form mã công ty/email/mật khẩu và link quên mật khẩu hiển thị.
+- Firecrawl scrape `/route-schedule`: HTTP 200 nhưng nội dung public vẫn là shell đăng nhập, không lộ Lịch Theo Tuyến khi chưa xác thực.
+- Firecrawl scrape `/admin`: HTTP 200 nhưng nội dung public vẫn là shell đăng nhập, không lộ màn hình quản trị khi chưa xác thực.
+- Các scrape dùng `maxAge=0` để buộc lấy bản hiện tại sau deploy.
+
 ## Kiểm thử trước deploy
 
 - `npm run typecheck`: đạt.
