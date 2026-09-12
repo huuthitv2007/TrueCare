@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { CalendarDays, Plus, Icon } from "../icons";
+import { CalendarDays, Check, Plus, Icon, RotateCcw } from "../icons";
 import { useWorkspace } from "../api";
 import { OrderTable } from "./Orders";
-import { dailyReport } from "../lib/reporting";
+import { attendanceForDate, dailyReport } from "../lib/reporting";
 import {
   Badge,
   Button,
@@ -477,6 +477,7 @@ export function Fund() {
 }
 export function Programs() {
   const { state, command, busy, notify } = useWorkspace();
+  const navigate = useNavigate();
   const [lines, setLines] = useState<
     { productId: string; quantity: number; price: string }[]
   >([]);
@@ -484,8 +485,24 @@ export function Programs() {
   const [count, setCount] = useState(1);
   const [allow, setAllow] = useState(false);
   const [expires, setExpires] = useState(today());
+  const productStatus = (p: (typeof state.products)[number]) =>
+    p.deletedAt
+      ? "Đang ở thùng rác"
+      : p.archived
+        ? "Ngừng kinh doanh"
+        : p.cost === null && p.price === null
+          ? "Thiếu giá vốn và giá chào"
+          : p.cost === null
+            ? "Thiếu giá vốn"
+            : p.price === null
+              ? "Thiếu giá chào"
+              : "";
+  const eligibleProducts = state.products.filter((p) => !productStatus(p));
+  const blockedProducts = state.products.filter((p) => productStatus(p));
   const add = (id: string) => {
-    const p = state.products.find((x) => x.id === id)!;
+    const p = eligibleProducts.find((x) => x.id === id);
+    if (!p) return notify("Sản phẩm chưa đủ giá vốn/giá chào để tạo chương trình.");
+    if (lines.some((line) => line.productId === id)) return notify("Sản phẩm đã có trong chương trình.");
     setLines([...lines, { productId: id, quantity: 1, price: p.price || "0" }]);
   };
   const save = async () => {
@@ -533,24 +550,51 @@ export function Programs() {
                 />
               </Field>
             </div>
-            <Field label="Thêm sản phẩm">
+            <Field
+              label="Thêm sản phẩm"
+              hint="Chỉ sản phẩm đang kinh doanh và đủ giá vốn/giá chào mới được chọn."
+            >
               <select
                 value=""
                 onChange={(e) => e.target.value && add(e.target.value)}
               >
-                <option value="">Chọn sản phẩm</option>
-                {state.products
-                  .filter((p) => p.cost !== null && p.price !== null)
-                  .map((p) => (
-                    <option value={p.id} key={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
+                <option value="">Chọn sản phẩm đủ điều kiện</option>
+                {eligibleProducts.length > 0 && (
+                  <optgroup label="Có thể dùng">
+                    {eligibleProducts.map((p) => (
+                      <option value={p.id} key={p.id}>
+                        {p.code ? `${p.code} · ` : ""}{p.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {blockedProducts.length > 0 && (
+                  <optgroup label="Chưa đủ điều kiện">
+                    {blockedProducts.slice(0, 80).map((p) => (
+                      <option value={p.id} key={p.id} disabled>
+                        {p.code ? `${p.code} · ` : ""}{p.name} — {productStatus(p)}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </Field>
+            {!eligibleProducts.length && (
+              <Notice type="warning">
+                Chưa có sản phẩm đủ điều kiện để tạo chương trình. Cần cập nhật giá vốn và giá chào trong trang Sản phẩm & bảng giá.
+              </Notice>
+            )}
+            {blockedProducts.length > 0 && (
+              <Notice>
+                {blockedProducts.length} sản phẩm đang bị ẩn khỏi danh sách chọn vì thiếu giá hoặc không còn kinh doanh.
+                <Button type="button" onClick={() => navigate("/products")}>
+                  Cập nhật bảng giá
+                </Button>
+              </Notice>
+            )}
             {lines.map((l, i) => (
               <div className="program-line" key={i}>
-                <span>
+                <span data-testid="program-selected-product">
                   {state.products.find((p) => p.id === l.productId)?.name}
                 </span>
                 <input
@@ -638,10 +682,31 @@ export function Programs() {
   );
 }
 export function DailyReport() {
-  const { state } = useWorkspace();
+  const { state, command, busy, notify } = useWorkspace();
   const [date, setDate] = useState(today());
   const [mode, setMode] = useState<"ordered" | "delivered">("ordered");
+  const attendance = attendanceForDate(state, date);
   const text = dailyReport(state, date, mode);
+  const setAttendance = async (status: "worked" | "cancelled" | "leave", reason: string) => {
+    try {
+      await command("setAttendance", { date, status, reason });
+      notify(status === "worked" ? "Đã điểm danh ngày làm việc." : "Đã ghi nhận ngày không làm việc.");
+    } catch (error) {
+      notify((error as Error).message);
+    }
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      notify("Đã sao chép báo cáo để gửi Zalo.");
+    } catch {
+      notify("Trình duyệt chưa cho phép sao chép. Bạn có thể bôi đen báo cáo để copy thủ công.");
+    }
+  };
+  const reset = () => {
+    setDate(today());
+    setMode("ordered");
+  };
   return (
     <>
       <Heading
@@ -679,8 +744,37 @@ export function DailyReport() {
               Thực giao
             </button>
           </div>
-          <Button onClick={() => navigator.clipboard.writeText(text)}>
-            Sao chép
+          <Button onClick={() => void copy()}>
+            Sao chép báo cáo
+          </Button>
+          <Button onClick={reset}>
+            <RotateCcw size={16} />
+            Đặt lại báo cáo
+          </Button>
+        </div>
+        <Notice type={attendance?.status === "worked" ? "success" : "warning"}>
+          {attendance?.status === "worked"
+            ? `Ngày ${day(date)} đã được tính vào Thời gian đã bán.`
+            : attendance?.status === "leave"
+              ? `Ngày ${day(date)} đã ghi nhận nghỉ phép, không cộng Thời gian đã bán.`
+              : attendance?.status === "cancelled"
+                ? `Ngày ${day(date)} đã hủy điểm danh, không cộng Thời gian đã bán.`
+                : `Ngày ${day(date)} chưa điểm danh, chưa cộng Thời gian đã bán.`}
+        </Notice>
+        <div className="toolbar">
+          <Button
+            variant="primary"
+            busy={busy}
+            onClick={() => void setAttendance("worked", "Điểm danh từ báo cáo cuối ngày")}
+          >
+            <Check size={16} />
+            Điểm danh ngày này
+          </Button>
+          <Button
+            busy={busy}
+            onClick={() => void setAttendance("leave", "Nghỉ phép hoặc không bán hàng")}
+          >
+            Nghỉ phép / không bán
           </Button>
         </div>
         <pre className="report-output">{text}</pre>

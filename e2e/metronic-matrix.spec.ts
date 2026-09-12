@@ -6,6 +6,7 @@ const employeeRoutes = [
   "/orders",
   "/orders/new",
   "/customers",
+  "/route-schedule",
   "/products",
   "/sales",
   "/delivered",

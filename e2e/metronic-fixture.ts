@@ -24,6 +24,7 @@ export function sampleState() {
     name: "Cửa hàng Minh Anh",
     address: "123 Đường Nguyễn Văn Linh, Thành phố Hồ Chí Minh",
     phone: "0901234567",
+    route: "Tuyến 1",
     visitDays: [1, 3, 5],
   });
   run("saveOrder", {
@@ -35,6 +36,15 @@ export function sampleState() {
   run("recordDelivery", {
     orderId: state.orders[0].id,
     lines: [{ lineId: state.orders[0].lines[0].id, quantity: 4 }],
+  });
+  run("setAttendance", { date: new Date().toISOString().slice(0, 10), status: "worked", reason: "E2E fixture" });
+  run("saveRouteSchedule", {
+    date: new Date().toISOString().slice(0, 10),
+    startTime: "08:00",
+    endTime: "10:00",
+    route: "Tuyến 1",
+    notes: "Chăm sóc fixture",
+    customerIds: [state.customers[0].id],
   });
   for (let i = 2; i <= 20; i++)
     run("saveCustomer", {

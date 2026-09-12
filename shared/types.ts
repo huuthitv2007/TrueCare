@@ -197,6 +197,33 @@ export interface InventoryMovement {
   reason: string;
   referenceId: string;
 }
+export type AttendanceStatus = "worked" | "cancelled" | "leave";
+export interface AttendanceRecord {
+  date: string;
+  status: AttendanceStatus;
+  checkedInAt?: string;
+  updatedAt: string;
+  changedBy?: string;
+  reason?: string;
+}
+export interface RouteSchedule {
+  id: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  route: string;
+  notes: string;
+  customerIds: string[];
+  status: "planned" | "completed" | "cancelled";
+  resultNotes?: string;
+  completedCustomerIds?: string[];
+  completedAt?: string;
+  deletedAt?: string;
+  deletedBy?: string;
+  deleteReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 export interface Program {
   id: string;
   name: string;
@@ -252,9 +279,11 @@ export interface AppState {
   }[];
   ledger: LedgerEntry[];
   programs: Program[];
+  routeSchedules?: RouteSchedule[];
   inventory: Inventory[];
   inventoryMovements: InventoryMovement[];
   visits: { id: string; customerId: string; date: string; notes: string }[];
+  attendance?: AttendanceRecord[];
   settings: Settings;
   audit: {
     id: string;

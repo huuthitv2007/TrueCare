@@ -243,6 +243,49 @@ describe("Quỹ thực giao và giữ ngân sách", () => {
     assert.equal(s.programs.length, 0);
     assert.equal(s.summary.reserved, "0");
   });
+  it("preview chương trình không chọn sản phẩm đã xóa", () => {
+    let s = fixture();
+    const p = { seed: 42, count: 1, mode: "single" };
+    assert.ok(previewPrograms(s, p).options.length > 0);
+    s = execute(
+      s,
+      {
+        type: "deleteProduct",
+        payload: { id: s.products[0].id, reason: "Ẩn sản phẩm khỏi chương trình" },
+        idempotencyKey: crypto.randomUUID(),
+        version: s.version,
+      },
+      { id: "admin", role: "admin" },
+    );
+    assert.equal(previewPrograms(s, p).options.length, 0);
+  });
+  it("lịch theo tuyến gợi ý khách, hoàn thành ghi lượt chăm sóc và xóa mềm", () => {
+    let s = emptyState("Nhân viên tuyến");
+    s = run(s, "saveCustomer", { name: "Cửa hàng A", route: "Tuyến A" });
+    s = run(s, "saveRouteSchedule", {
+      date: "2026-09-13",
+      startTime: "08:00",
+      endTime: "10:00",
+      route: "Tuyến A",
+      notes: "Chăm sóc định kỳ",
+      customerIds: [s.customers[0].id],
+    });
+    const schedule = s.routeSchedules![0];
+    assert.equal(schedule.status, "planned");
+    assert.deepEqual(schedule.customerIds, [s.customers[0].id]);
+    s = run(s, "completeRouteSchedule", {
+      id: schedule.id,
+      completedCustomerIds: [s.customers[0].id],
+      resultNotes: "Đã chăm sóc",
+    });
+    assert.equal(s.routeSchedules![0].status, "completed");
+    assert.equal(s.visits.length, 1);
+    assert.equal(s.visits[0].date, "2026-09-13");
+    s = run(s, "completeRouteSchedule", { id: schedule.id, completedCustomerIds: [s.customers[0].id], resultNotes: "Cập nhật kết quả" });
+    assert.equal(s.visits.length, 1);
+    s = run(s, "deleteRouteSchedule", { id: schedule.id, reason: "Đổi tuyến chăm sóc" });
+    assert.ok(s.routeSchedules![0].deletedAt);
+  });
   it("quà TrueCare thực giao được tính KPI theo giá gốc dù công ty chịu chi phí", () => {
     let s = fixture();
     s = run(s, "saveOrder", {

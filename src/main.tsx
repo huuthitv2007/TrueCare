@@ -1,4 +1,4 @@
-﻿import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { setNonce } from "get-nonce";
 import { Suspense, lazy, useRef } from "react";
@@ -67,6 +67,11 @@ const Programs = lazy(() =>
 const DailyReport = lazy(() =>
   import("./features/WorkspacePages").then((module) => ({
     default: module.DailyReport,
+  })),
+);
+const RouteSchedulePage = lazy(() =>
+  import("./features/RouteSchedule").then((module) => ({
+    default: module.RouteSchedulePage,
   })),
 );
 
@@ -270,6 +275,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       >
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/admin" element={<Navigate to="/" replace />} />
           <Route
             path="/admin/*"
             element={
@@ -284,6 +290,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           <Route path="/orders/new" element={<OrderEditor />} />
           <Route path="/orders/:id" element={<OrderEditor />} />
           <Route path="/customers" element={<Customers />} />
+          <Route path="/route-schedule" element={<RouteSchedulePage />} />
           <Route path="/products" element={<Products />} />
           <Route path="/imports" element={<Imports />} />
           <Route path="/sales" element={<SalesReport mode="ordered" />} />

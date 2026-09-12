@@ -1851,3 +1851,58 @@ td small {
   .table-scroll .admin-action-column { width: 108px; min-width: 108px; max-width: 108px; padding: 8px; }
   .table-scroll .admin-action-column .btn { padding: 8px; }
 }
+.route-schedule-list {
+  display: grid;
+  gap: 14px;
+}
+.route-schedule-card {
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+}
+.route-schedule-card > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.route-schedule-meta,
+.route-customer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.route-customer-chips span {
+  border: 1px solid var(--border);
+  background: var(--muted);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.route-customer-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.route-customer-picker .checkbox-row {
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+}
+.route-customer-picker small {
+  display: block;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+}
+@media (max-width: 767px) {
+  .route-schedule-card {
+    padding: 14px;
+  }
+  .route-schedule-card .heading-actions {
+    width: 100%;
+  }
+  .route-schedule-card .heading-actions .btn {
+    flex: 1 1 100%;
+  }
+}

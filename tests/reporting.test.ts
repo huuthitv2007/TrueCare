@@ -9,6 +9,7 @@ import {
   csvCell,
   productQuantities,
   workDaysBetween,
+  attendanceDaysBetween,
 } from "../src/lib/reporting";
 import type { AppState } from "../shared/types";
 function fixture() {
@@ -171,4 +172,31 @@ test("end of reporting period does not divide by zero and respects holidays", ()
   assert.match(text, /Hết ngày làm việc/);
   assert.doesNotMatch(text, /NaN|Infinity/);
   assert.match(text, /_Số ASO: 15/);
+});
+
+test("daily report counts only worked attendance days and omits method line", () => {
+  let s = emptyState("Nhân viên thử");
+  s.settings.periodStart = "2026-09-01";
+  const run = (date: string, status: "worked" | "cancelled" | "leave") => {
+    s = execute(s, {
+      type: "setAttendance",
+      payload: { date, status, reason: `Trạng thái ${status}` },
+      version: s.version,
+      idempotencyKey: crypto.randomUUID(),
+    });
+  };
+  run("2026-09-01", "worked");
+  run("2026-09-02", "leave");
+  run("2026-09-01", "worked");
+  assert.equal(attendanceDaysBetween(s, "2026-09-01", "2026-09-03"), 1);
+  const text = dailyReport(s, "2026-09-03");
+  assert.match(text, /_Thời gian đã bán: 1\//);
+  assert.doesNotMatch(text, /Cách ghi nhận/);
+});
+
+test("daily report includes completed care visits", () => {
+  const s = emptyState("Nhân viên thử");
+  s.visits.push({ id: "visit-1", customerId: "customer-1", date: "2026-09-03", notes: "Đã chăm sóc" });
+  s.visits.push({ id: "visit-2", customerId: "customer-2", date: "2026-09-02", notes: "Ngày khác" });
+  assert.match(dailyReport(s, "2026-09-03"), /_CSKH: 1 lượt chăm sóc/);
 });

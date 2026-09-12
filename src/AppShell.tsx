@@ -5,11 +5,13 @@ import { useWorkspace } from "./api";
 import { Brand } from "./Brand";
 import { applyTheme, readTheme } from "./theme";
 import { Icon } from "./icons";
+import { Button, Modal, Notice, today } from "./ui";
 
 export const navigation = [
   ["/", "element-11", "Tổng quan"],
   ["/orders", "notepad", "Nhập đơn hàng"],
   ["/customers", "people", "Khách hàng"],
+  ["/route-schedule", "calendar", "Lịch Theo Tuyến"],
   ["/sales", "chart-simple", "Doanh số bán hàng"],
   ["/delivered", "delivery", "Doanh số thực giao"],
   ["/inventory", "parcel", "Tồn kho"],
@@ -33,6 +35,7 @@ export function AppShell({
     state,
     command,
     notify,
+    busy,
     adminTarget,
     setAdminTarget,
     adminReason,
@@ -49,6 +52,9 @@ export function AppShell({
   );
   const [themeBusy, setThemeBusy] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
+  const todayDate = today();
+  const attendance = (state.attendance ?? []).find((item) => item.date === todayDate);
+  const [attendancePrompt, setAttendancePrompt] = useState(false);
   useEffect(() => {
     const media = matchMedia("(max-width: 1023px)");
     const update = () => {
@@ -64,6 +70,34 @@ export function AppShell({
   useEffect(() => {
     applyTheme(theme, user.id);
   }, [theme, user.id]);
+  useEffect(() => {
+    const check = () => {
+      const hour = Number(
+        new Intl.DateTimeFormat("en-GB", {
+          timeZone: "Asia/Ho_Chi_Minh",
+          hour: "2-digit",
+          hour12: false,
+        }).format(new Date()),
+      );
+      setAttendancePrompt(hour >= 7 && !attendance && !adminTarget);
+    };
+    check();
+    const timer = window.setInterval(check, 60_000);
+    return () => window.clearInterval(timer);
+  }, [adminTarget, attendance?.status, todayDate, user.id]);
+  const markAttendance = async (status: "worked" | "cancelled") => {
+    try {
+      await command("setAttendance", {
+        date: todayDate,
+        status,
+        reason: status === "worked" ? "Điểm danh đầu ngày" : "Hủy điểm danh trong ngày",
+      });
+      notify(status === "worked" ? "Đã điểm danh ngày làm việc." : "Hôm nay không được cộng vào Thời gian đã bán.");
+      setAttendancePrompt(false);
+    } catch (error) {
+      notify((error as Error).message);
+    }
+  };
   const switchTheme = async () => {
     if (themeBusy) return;
     const previous = theme,
@@ -147,7 +181,7 @@ export function AppShell({
           <>
             <span className="nav-section-label">Quản trị</span>
             <NavLink
-              to="/admin"
+              to="/admin/overview"
               className={({ isActive }) =>
                 `workspace-nav-link kt-menu-link${isActive ? " active" : ""}`
               }
@@ -294,6 +328,32 @@ export function AppShell({
             <span>Không gian làm việc</span>
           </footer>
         </div>
+        {attendancePrompt && (
+          <Modal title="Điểm danh hôm nay" onClose={() => setAttendancePrompt(false)}>
+            <div className="form-stack">
+              <Notice>
+                Bấm Điểm danh nếu hôm nay bạn làm việc. Hệ thống chỉ cộng Thời gian đã bán cho những ngày đã điểm danh.
+              </Notice>
+              <div className="modal-actions">
+                <Button
+                  type="button"
+                  onClick={() => void markAttendance("cancelled")}
+                  disabled={busy}
+                >
+                  Hủy
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  busy={busy}
+                  onClick={() => void markAttendance("worked")}
+                >
+                  Điểm danh
+                </Button>
+              </div>
+            </div>
+          </Modal>
+        )}
       </div>
     </Dialog.Root>
   );

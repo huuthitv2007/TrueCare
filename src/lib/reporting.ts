@@ -309,6 +309,18 @@ export function workDaysBetween(
   }
   return count;
 }
+export function attendanceDaysBetween(
+  state: AppState,
+  from: string,
+  to: string,
+): number {
+  return (state.attendance ?? []).filter(
+    (item) => item.status === "worked" && item.date >= from && item.date <= to,
+  ).length;
+}
+export function attendanceForDate(state: AppState, date: string) {
+  return (state.attendance ?? []).find((item) => item.date === date);
+}
 const nextDate = (date: string) =>
   new Date(Date.parse(date + "T00:00:00Z") + 86400000)
     .toISOString()
@@ -351,7 +363,7 @@ export function dailyReport(
       cfg.holidays,
     ),
     allDays = workDaysBetween(start, end, cfg.workDays, cfg.holidays),
-    elapsed = workDaysBetween(start, date, cfg.workDays, cfg.holidays);
+    elapsed = attendanceDaysBetween(state, start, date);
   const shortfall = Decimal.max(0, D(cfg.monthlyTarget).minus(sales));
   const newDay = state.customers.filter((c) => c.openedDate === date).length,
     newPeriod = state.customers.filter(
@@ -381,10 +393,10 @@ export function dailyReport(
           fold(r.product).includes(fold(String(cfg.focusProduct))),
       ),
     );
+  const careVisits = state.visits.filter((visit) => visit.date === date).length;
   return [
     `BCDS Ngày ${date.split("-").reverse().join("/")}`,
     `NV: ${cfg.displayName} - Tuyến: ${routes}`,
-    `Cách ghi nhận: ${mode === "ordered" ? "Giá trị đơn đã chốt" : "KPI thực giao theo giá gốc (sau trả hàng)"}`,
     `_Số ASO: ${cfg.aso}`,
     `_DS: ${fmt(daySales)}đ / ${fmt(cfg.dailyTarget)}đ / ${pct(daySales, cfg.dailyTarget)}`,
     `_Lũy tiến: ${fmt(sales)}đ / ${fmt(cfg.monthlyTarget)}đ / ${pct(sales, cfg.monthlyTarget)}`,
@@ -392,6 +404,7 @@ export function dailyReport(
     `_DS còn lại: ${remainingDays ? fmt(shortfall.div(remainingDays)) + "đ/ngày (" + remainingDays + " ngày còn lại)" : "Hết ngày làm việc; còn thiếu " + fmt(shortfall) + "đ"}`,
     `_ĐH: ${daily.orders} / Lũy tiến: ${total.orders + Number(cfg.openingOrders || 0)}`,
     `_MM: ${newDay} / Lũy tiến: ${newPeriod + Number(cfg.openingCustomers || 0)} / ${cfg.newCustomerTarget}`,
+    `_CSKH: ${careVisits} lượt chăm sóc`,
     `_NGX: ${category(dayRows, "NGX")} / Lũy tiến: ${category(periodRows, "NGX")}`,
     `_NXV: ${category(dayRows, "NXV")} / Lũy tiến: ${category(periodRows, "NXV")}`,
     `_#: ${category(dayRows, "#")} / Lũy tiến: ${category(periodRows, "#")}`,
