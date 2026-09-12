@@ -52,9 +52,6 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="auth-page">
       <header className="auth-header">
-        <a href="/" aria-label="TrueCare">
-          <Brand />
-        </a>
         <button
           className="icon-button"
           aria-label={`Chuyển sang giao diện ${theme === "light" ? "tối" : "sáng"}`}
@@ -64,16 +61,21 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
         </button>
       </header>
       <main className="auth-main">
-        <section className="kt-card auth-card" aria-labelledby="auth-title">
+        <section
+          className="kt-card auth-card"
+          aria-labelledby={mode === "forgot" ? "auth-title" : undefined}
+          aria-label={mode === "login" ? "TrueCare" : undefined}
+        >
+          <a href="/" className="auth-brand" aria-label="TrueCare">
+            <Brand />
+          </a>
           <div className="auth-heading">
-            <h1 id="auth-title">
-              {mode === "login" ? "Đăng nhập" : "Khôi phục mật khẩu"}
-            </h1>
-            <p>
-              {mode === "login"
-                ? "Chào mừng bạn trở lại với TrueCare."
-                : "Nhập email hoặc tên đăng nhập đã được cấp."}
-            </p>
+            {mode === "forgot" && (
+              <>
+                <h1 id="auth-title">Khôi phục mật khẩu</h1>
+                <p>Nhập email hoặc tên đăng nhập đã được cấp.</p>
+              </>
+            )}
           </div>
           {error && <Notice type="error">{error}</Notice>}
           {message && <Notice type="success">{message}</Notice>}

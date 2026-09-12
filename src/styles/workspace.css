@@ -98,6 +98,17 @@ summary:focus-visible {
   object-fit: contain;
   flex-shrink: 0;
 }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 /* Shell follows demo1 geometry; navigation state is owned by React. */
 .app-shell {
   min-height: 100dvh;
@@ -117,7 +128,7 @@ summary:focus-visible {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   padding: 0 24px;
   border-bottom: 1px solid var(--border);
   position: relative;
@@ -125,6 +136,13 @@ summary:focus-visible {
 .brand-link {
   display: flex;
   align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+}
+.sidebar-brand {
+  width: 64px;
+  height: 64px;
 }
 .sidebar-toggle {
   position: absolute;
@@ -307,7 +325,11 @@ summary:focus-visible {
   --sidebar-width: 80px;
 }
 .navigation-collapsed .kt-sidebar-header {
-  padding-inline: 10px;
+  padding-inline: 0;
+}
+.navigation-collapsed .sidebar-brand {
+  width: 48px;
+  height: 48px;
 }
 .navigation-collapsed .workspace-nav {
   padding-inline: 14px;
@@ -338,12 +360,20 @@ summary:focus-visible {
 .mobile-drawer .kt-sidebar-header {
   height: 60px;
   padding-inline: 18px;
+  justify-content: space-between;
 }
-.mobile-drawer .truecare-logo {
+.mobile-drawer .brand-link {
+  width: auto;
+}
+.mobile-drawer .sidebar-brand {
   width: 48px;
   height: 48px;
 }
-.mobile-logo .truecare-logo {
+.mobile-logo {
+  display: flex;
+  align-items: center;
+}
+.mobile-logo .mobile-brand {
   width: 42px;
   height: 42px;
 }
@@ -1462,7 +1492,7 @@ td small {
 .auth-header {
   padding: 20px 32px;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
 }
 .auth-main {
@@ -1480,9 +1510,24 @@ td small {
   border-radius: 12px;
   box-shadow: 0 3px 4px #00000003;
 }
+.auth-brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 28px;
+}
+.auth-brand .truecare-logo {
+  width: 112px;
+  height: 112px;
+}
 .auth-heading {
   margin-bottom: 28px;
   text-align: center;
+}
+.auth-heading:empty {
+  display: none;
+}
+.auth-heading:has(.sr-only) {
+  margin-bottom: 0;
 }
 .auth-heading h1 {
   font-size: 22px;
@@ -1702,6 +1747,13 @@ td small {
   }
   .auth-card {
     padding: 24px;
+  }
+  .auth-brand {
+    margin-bottom: 24px;
+  }
+  .auth-brand .truecare-logo {
+    width: 88px;
+    height: 88px;
   }
   .workspace-footer {
     padding-bottom: calc(20px + env(safe-area-inset-bottom));

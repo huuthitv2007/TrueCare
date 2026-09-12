@@ -105,7 +105,7 @@ export function AppShell({
           aria-label="TrueCare — Tổng quan"
           className="brand-link"
         >
-          <Brand />
+          <Brand className="sidebar-brand" />
         </NavLink>
         {mobile ? (
           <Dialog.Close className="icon-button" aria-label="Đóng menu">
@@ -221,7 +221,7 @@ export function AppShell({
                     className="mobile-logo"
                     aria-label="TrueCare — Tổng quan"
                   >
-                    <Brand />
+                    <Brand className="mobile-brand" />
                   </NavLink>
                 </>
               )}
