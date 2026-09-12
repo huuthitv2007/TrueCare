@@ -1,6 +1,8 @@
 import express from "express";
+import { readListFilter } from './list-filter.js';
 import { createClient } from "@supabase/supabase-js";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { previewPrograms, DomainError, assert } from "./domain.js";
 import { createSupabaseAdapter } from "./supabase-adapter.js";
@@ -44,33 +46,15 @@ if (!url || !serviceKey || !anonKey)
   );
 const app = express();
 app.set("trust proxy", 1);
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
-const adminRequests = new Map<string, { count: number; resetAt: number }>();
-const assertLoginRate = (key: string) => {
-  const now = Date.now();
-  const current = loginAttempts.get(key);
-  if (!current || current.resetAt <= now) {
-    loginAttempts.set(key, { count: 0, resetAt: now + 15 * 60_000 });
-    return;
-  }
-  if (current.count >= 8)
-    throw new DomainError(
-      "RATE_LIMIT",
-      "Đăng nhập sai quá nhiều lần. Vui lòng thử lại sau 15 phút.",
-      429,
-    );
-};
-const failedLogin = (key: string) => {
-  const current = loginAttempts.get(key) ?? {
-    count: 0,
-    resetAt: Date.now() + 15 * 60_000,
-  };
-  current.count += 1;
-  loginAttempts.set(key, current);
-};
 const admin = createClient(url, serviceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+const rateKey = (scope: string, value: string) => `${scope}:${createHash("sha256").update(value).digest("hex")}`;
+const consumeRateLimit = async (key: string, limit: number, seconds: number, message: string) => {
+  const { data, error } = await admin.rpc("consume_rate_limit", { p_key: key, p_limit: limit, p_window_seconds: seconds });
+  if (error) throw new DomainError("STORAGE", "Không kiểm tra được giới hạn thao tác", 503);
+  if (!data) throw new DomainError("RATE_LIMIT", message, 429);
+};
 const auth = createClient(url, anonKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -85,16 +69,24 @@ const accountFields =
 app.disable("x-powered-by");
 app.use(express.json({ limit: "14mb" }));
 app.use((req, res, next) => {
+  const styleNonce = randomBytes(24).toString("base64");
+  res.locals.styleNonce = styleNonce;
   res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader(
+    "Content-Security-Policy",
+    `default-src 'self'; script-src 'self'; style-src 'self' 'nonce-${styleNonce}' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
+  );
   res.setHeader("Cache-Control", "no-store");
   if (
     req.method !== "GET" &&
-    process.env.APP_ORIGIN &&
-    req.headers.origin &&
-    req.headers.origin !== process.env.APP_ORIGIN
+    ((process.env.APP_ORIGIN && req.headers.origin && req.headers.origin !== process.env.APP_ORIGIN) ||
+      (req.headers["sec-fetch-site"] && !["same-origin", "none"].includes(String(req.headers["sec-fetch-site"]))))
   ) {
     res.status(403).json({
-      error: { code: "ORIGIN", message: "Nguồn yêu cầu không hợp lệ" },
+      error: { code: "FORBIDDEN", message: "Nguồn yêu cầu không hợp lệ" },
     });
     return;
   }
@@ -103,7 +95,9 @@ app.use((req, res, next) => {
 const cookie = (req: express.Request) =>
   req.headers.cookie?.match(/(?:^|;\s*)tc_session=([^;]+)/)?.[1] || "";
 const tokenOf = (req: express.Request) => decodeURIComponent(cookie(req));
-const setSession = (res: express.Response, token: string) =>
+const sessionIdOf = (req: express.Request) =>
+  decodeURIComponent(req.headers.cookie?.match(/(?:^|;\s*)tc_session_id=([^;]+)/)?.[1] || "");
+const setSession = (res: express.Response, token: string, sessionId: string) => {
   res.cookie("tc_session", encodeURIComponent(token), {
     httpOnly: true,
     sameSite: "strict",
@@ -111,6 +105,11 @@ const setSession = (res: express.Response, token: string) =>
     maxAge: 1000 * 60 * 60 * 24 * 7,
     path: "/",
   });
+  res.cookie("tc_session_id", encodeURIComponent(sessionId), {
+    httpOnly: true, sameSite: "strict", secure: true,
+    maxAge: 1000 * 60 * 60 * 24 * 7, path: "/",
+  });
+};
 const route =
   (fn: express.RequestHandler): express.RequestHandler =>
   (req, res, next) =>
@@ -140,7 +139,7 @@ const accountOf = async (userId: string) => {
     throw new DomainError("STORAGE", "Không đọc được quyền tài khoản", 503);
   if (!data)
     throw new DomainError(
-      "AUTH",
+      "FORBIDDEN",
       "Tài khoản chưa được quản trị viên cấp quyền",
       403,
     );
@@ -150,10 +149,10 @@ const userOf = async (req: express.Request): Promise<Session> => {
   const token = tokenOf(req);
   const { data, error } = await admin.auth.getUser(token);
   if (error || !data.user)
-    throw new DomainError("AUTH", "Vui lòng đăng nhập", 401);
+    throw new DomainError("SESSION_EXPIRED", "Vui lòng đăng nhập", 401);
   const account = await accountOf(data.user.id);
   if (!account.active)
-    throw new DomainError("AUTH", "Tài khoản đã bị khóa", 403);
+    throw new DomainError("FORBIDDEN", "Tài khoản đã bị khóa", 403);
   let issuedAt = 0;
   try {
     issuedAt = Number(
@@ -163,7 +162,15 @@ const userOf = async (req: express.Request): Promise<Session> => {
     );
   } catch {}
   if (!sessionIsCurrent(account, issuedAt))
-    throw new DomainError("AUTH", "Phiên đăng nhập đã được thu hồi", 401);
+    throw new DomainError("SESSION_EXPIRED", "Phiên đăng nhập đã được thu hồi", 401);
+  {
+    const appSession = await admin.from("app_user_sessions").select("id,user_id,revoked_at,last_seen_at").eq("token_hash", createHash('sha256').update(token).digest('hex')).maybeSingle();
+    if (appSession.error) throw new DomainError("STORAGE", "Không kiểm tra được phiên đăng nhập", 503);
+    if (!appSession.data || appSession.data.user_id !== account.user_id || appSession.data.revoked_at)
+      throw new DomainError("SESSION_EXPIRED", "Phiên đăng nhập đã hết hạn", 401);
+    if (Date.now() - Date.parse(appSession.data.last_seen_at) > 60_000)
+      await admin.from("app_user_sessions").update({ last_seen_at: new Date().toISOString() }).eq("id", appSession.data.id);
+  }
   return { token, user: accountUser(account), account };
 };
 const revokeSessions = async (userId: string) => {
@@ -178,6 +185,10 @@ const revokeSessions = async (userId: string) => {
     .eq("user_id", userId);
   if (error)
     throw new DomainError("STORAGE", "Không thể thu hồi phiên đăng nhập", 503);
+  const revoked = await admin.from("app_user_sessions")
+    .update({ revoked_at: new Date().toISOString() }).eq("user_id", userId).is("revoked_at", null);
+  if (revoked.error)
+    throw new DomainError("STORAGE", "Không thể thu hồi toàn bộ phiên đăng nhập", 503);
   return sessionValidAfter;
 };
 const logAdmin = async (
@@ -616,13 +627,13 @@ app.post(
     const loginValue = String(login ?? username ?? email ?? "")
       .trim()
       .toLowerCase();
-    const rateKey = `${req.ip}:${loginValue}`;
-    assertLoginRate(rateKey);
+    const loginBucket = rateKey("login", `${req.ip}:${loginValue}`);
+    await consumeRateLimit(rateKey("login-ip", String(req.ip)), 60, 15 * 60, "Có quá nhiều yêu cầu đăng nhập. Vui lòng thử lại sau.");
+    await consumeRateLimit(loginBucket, 8, 15 * 60, "Đăng nhập sai quá nhiều lần. Vui lòng thử lại sau 15 phút.");
     let account: AccountRow;
     try {
       account = await resolveLogin(loginValue);
     } catch (error) {
-      failedLogin(rateKey);
       throw error;
     }
     const signed = await auth.auth.signInWithPassword({
@@ -630,39 +641,75 @@ app.post(
       password,
     });
     if (signed.error || !signed.data.session) {
-      failedLogin(rateKey);
       throw new DomainError("AUTH", "Thông tin đăng nhập không hợp lệ", 401);
     }
-    loginAttempts.delete(rateKey);
+    await admin.from("api_rate_limits").delete().eq("bucket_key", loginBucket);
     await admin
       .from("employee_accounts")
       .update({ last_login_at: new Date().toISOString() })
       .eq("user_id", account.user_id);
-    setSession(res, signed.data.session.access_token);
+    const appSession = await admin.from("app_user_sessions").insert({
+      user_id: account.user_id,
+      token_hash: createHash('sha256').update(signed.data.session.access_token).digest('hex'),
+      user_agent: String(req.headers["user-agent"] ?? "").slice(0, 500),
+    }).select("id").single();
+    if (appSession.error) throw new DomainError("STORAGE", "Không thể tạo phiên đăng nhập", 503);
+    setSession(res, signed.data.session.access_token, appSession.data.id);
     res.json({ user: accountUser(account), mode: "supabase" });
   }),
 );
-app.post("/api/auth/logout", (_req, res) => {
+app.post("/api/auth/logout", route(async (req, res) => {
+  const token = tokenOf(req);
+  if (token) await admin.from("app_user_sessions").update({ revoked_at: new Date().toISOString() }).eq("token_hash", createHash('sha256').update(token).digest('hex'));
   res.clearCookie("tc_session", { path: "/" });
+  res.clearCookie("tc_session_id", { path: "/" });
   res.json({ ok: true });
-});
+}));
 app.post(
   "/api/auth/logout-all",
   route(async (req, res) => {
     const session = await userOf(req);
     await revokeSessions(session.user.id);
+    await admin.from("app_user_sessions").update({ revoked_at: new Date().toISOString() }).eq("user_id", session.user.id).is("revoked_at", null);
     res.clearCookie("tc_session", { path: "/" });
+    res.clearCookie("tc_session_id", { path: "/" });
     res.json({ ok: true });
   }),
 );
+app.get("/api/auth/sessions", route(async (req, res) => {
+  const session = await userOf(req);
+  const { data, error } = await admin.from("app_user_sessions")
+    .select("id,user_agent,created_at,last_seen_at,revoked_at")
+    .eq("user_id", session.user.id).is("revoked_at", null)
+    .order("last_seen_at", { ascending: false }).limit(20);
+  if (error) throw new DomainError("STORAGE", "Không tải được danh sách phiên", 503);
+  res.json({ items: (data ?? []).map((item) => ({ ...item, current: item.id === sessionIdOf(req) })) });
+}));
+app.delete("/api/auth/sessions/:id", route(async (req, res) => {
+  const session = await userOf(req);
+  const { data, error } = await admin.from("app_user_sessions")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("id", req.params.id).eq("user_id", session.user.id).is("revoked_at", null)
+    .select("id").maybeSingle();
+  if (error) throw new DomainError("STORAGE", "Không thể thu hồi phiên", 503);
+  assert(data, "Không tìm thấy phiên đang hoạt động", "CONFLICT");
+  if (data.id === sessionIdOf(req)) {
+    res.clearCookie("tc_session", { path: "/" });
+    res.clearCookie("tc_session_id", { path: "/" });
+  }
+  res.json({ ok: true, current: data.id === sessionIdOf(req) });
+}));
 app.post(
   "/api/auth/forgot-password",
   route(async (req, res) => {
-    const account = await resolveLogin(req.body.email);
-    const reset = await auth.auth.resetPasswordForEmail(account.email, {
-      redirectTo: process.env.APP_ORIGIN,
-    });
-    if (reset.error) throw new DomainError("AUTH", reset.error.message, 400);
+    await consumeRateLimit(rateKey("password-recovery", String(req.ip)), 5, 15 * 60, "Vui lòng chờ trước khi yêu cầu khôi phục lần nữa.");
+    try {
+      const account = await resolveLogin(String(req.body.email??''));
+      const reset = await auth.auth.resetPasswordForEmail(account.email, { redirectTo: process.env.APP_ORIGIN });
+      if(reset.error) throw new DomainError("STORAGE","Không gửi được hướng dẫn khôi phục lúc này",503);
+    } catch(error) {
+      if(error instanceof DomainError && error.code==='STORAGE')throw error;
+    }
     res.json({ message: "Nếu email hợp lệ, hướng dẫn khôi phục đã được gửi." });
   }),
 );
@@ -671,6 +718,7 @@ app.post(
   route(async (req, res) => {
     const session = await userOf(req);
     const oldPassword = String(req.body.oldPassword ?? "");
+    await consumeRateLimit(rateKey("change-password",session.user.id),5,15*60,"Thử đổi mật khẩu quá nhiều lần. Vui lòng thử lại sau.");
     const newPassword = validateEmployeePassword(req.body.newPassword);
     const verified = await auth.auth.signInWithPassword({
       email: session.account.email,
@@ -692,6 +740,8 @@ app.use(
     if (req.path.startsWith("/auth/")) return next();
     const session = await userOf(req);
     res.locals.session = session;
+    if(!['GET','HEAD','OPTIONS'].includes(req.method))
+      await consumeRateLimit(rateKey("write",session.user.id),120,60,"Thao tác quá nhanh. Vui lòng thử lại sau một phút.");
     next();
   }),
 );
@@ -772,14 +822,7 @@ app.use(
   route(async (req, res, next) => {
     const user = (res.locals.session as Session).user;
     requireAdmin(user);
-    const now = Date.now(), current = adminRequests.get(user.id);
-    const bucket = !current || current.resetAt <= now
-      ? { count: 0, resetAt: now + 60_000 }
-      : current;
-    bucket.count += 1;
-    adminRequests.set(user.id, bucket);
-    if (bucket.count > 180)
-      throw new DomainError("RATE_LIMIT", "Thao tác quản trị quá nhanh. Vui lòng thử lại sau một phút.", 429);
+    await consumeRateLimit(rateKey("admin", user.id), 180, 60, "Thao tác quản trị quá nhanh. Vui lòng thử lại sau một phút.");
     next();
   }),
 );
@@ -1102,6 +1145,7 @@ app.put(
     );
     const next = await executeAdminCommand(session.user.id, session.user, "saveCatalog", {
       [kind]: values,
+      entryStatus: { [kind]: req.body.entryStatus ?? {} },
       reason,
     }, req.header("x-idempotency-key") ?? undefined);
     await logAdmin(session.user.id, null, "update_catalog", reason, { kind }, {
@@ -1122,10 +1166,11 @@ app.get(
     const catalogs = state?.catalogs ?? {};
     const entries = Object.entries(catalogs).flatMap(([kind, values]) =>
       (values as string[]).map((value, position) => ({
-        id: `${kind}:${position}`,
+        id: state?.catalogEntries?.find(entry=>entry.kind===kind&&entry.value===value)?.id ?? `${kind}:${position}`,
         kind,
         value,
         position,
+        active: state?.catalogEntries?.find(entry=>entry.kind===kind&&entry.value===value)?.active ?? true,
         usage: catalogUsage(states, state?.products ?? [], state?.customers ?? [], kind, value),
       })),
     );
@@ -1199,11 +1244,13 @@ app.post(
 app.get(
   "/api/admin/funds",
   route(async (req, res) => {
+    const filter = readListFilter(req.query);
     const states = await ownedStates();
     const ownerId = String(req.query.ownerId ?? "");
     const rows = states
       .filter((x) => !ownerId || x.ownerId === ownerId)
       .flatMap((owned) => owned.state.ledger.map((entry) => ({ ...entry, ownerId: owned.ownerId, ownerName: owned.ownerName })))
+      .filter(entry=>filter.matches(entry.date,entry.ownerId,entry.notes,entry.type,entry.ownerName))
       .sort((a, b) => b.date.localeCompare(a.date));
     res.json(pageOf(rows, pageQuery(req).page, pageQuery(req).pageSize));
   }),
@@ -1212,11 +1259,13 @@ app.get(
 app.get(
   "/api/admin/programs",
   route(async (req, res) => {
+    const filter = readListFilter(req.query);
     const states = await ownedStates();
     const status = String(req.query.status ?? "all");
     const rows = states
       .flatMap((owned) => owned.state.programs.map((program) => ({ ...program, ownerId: owned.ownerId, ownerName: owned.ownerName })))
       .filter((program) => status === "all" || program.status === status)
+      .filter(program=>filter.matches(program.expiresAt,program.ownerId,program.name,program.ownerName))
       .sort((a, b) => b.expiresAt.localeCompare(a.expiresAt));
     res.json(pageOf(rows, pageQuery(req).page, pageQuery(req).pageSize));
   }),
@@ -1225,11 +1274,17 @@ app.get(
 app.get(
   "/api/admin/imports",
   route(async (req, res) => {
-    const { data, error, count } = await admin
+    const filter = readListFilter(req.query);
+    let query = admin
       .from("admin_import_jobs")
       .select("id,owner_id,actor_id,filename,kind,status,summary,error_message,created_at,updated_at", { count: "exact" })
       .order("created_at", { ascending: false })
       .range((pageQuery(req).page - 1) * pageQuery(req).pageSize, pageQuery(req).page * pageQuery(req).pageSize - 1);
+    if(filter.from)query=query.gte('created_at',`${filter.from}T00:00:00+07:00`);
+    if(filter.to)query=query.lte('created_at',`${filter.to}T23:59:59.999999+07:00`);
+    if(req.query.q)query=query.ilike('filename',`%${String(req.query.q).replace(/[%_]/g,'')}%`);
+    if(req.query.status && req.query.status!=='all')query=query.eq('status',String(req.query.status));
+    const { data, error, count } = await query;
     if (error) throw new DomainError("STORAGE", "Không tải được lịch sử nhập dữ liệu", 503);
     res.json({ items: data ?? [], total: count ?? 0, ...pageQuery(req) });
   }),
@@ -1644,6 +1699,7 @@ app.get(
   "/api/admin/audit",
   route(async (req, res) => {
     const { page, pageSize } = pageQuery(req);
+    const filter=readListFilter(req.query);
     let query = admin
       .from("admin_audit_logs")
       .select("id,actor_id,target_user_id,action,reason,details,request_id,object_type,object_id,before_data,after_data,created_at", { count: "exact" })
@@ -1653,8 +1709,8 @@ app.get(
     if (req.query.actorId) query = query.eq("actor_id", String(req.query.actorId));
     if (req.query.targetId) query = query.eq("target_user_id", String(req.query.targetId));
     if (req.query.objectType) query = query.eq("object_type", String(req.query.objectType));
-    if (req.query.from) query = query.gte("created_at", String(req.query.from));
-    if (req.query.to) query = query.lte("created_at", String(req.query.to) + "T23:59:59.999Z");
+    if (req.query.from) query = query.gte("created_at", filter.from + "T00:00:00+07:00");
+    if (req.query.to) query = query.lte("created_at", filter.to + "T23:59:59.999+07:00");
     if (req.query.q) query = query.ilike("reason", `%${String(req.query.q).slice(0, 120)}%`);
     const { data, error, count } = await query;
     if (error)
@@ -1662,7 +1718,7 @@ app.get(
     const accounts = await team();
     const names = new Map(accounts.map((x) => [x.id, x.displayName]));
     res.json({
-      entries: (data ?? []).map((entry) => ({
+      items: (data ?? []).map((entry) => ({
         ...entry,
         actor_name: names.get(entry.actor_id) ?? "Tài khoản đã xoá",
         target_name: entry.target_user_id ? names.get(entry.target_user_id) ?? "Tài khoản đã xoá" : "Hệ thống",
@@ -1675,13 +1731,17 @@ app.get(
   }),
 );
 
+const applicationHtml = readFileSync(path.resolve("dist/index.html"), "utf8");
+const sendApplication = (_req: express.Request, res: express.Response) =>
+  res.type("html").send(applicationHtml.replace("<head>", `<head><meta name="csp-nonce" content="${res.locals.styleNonce}">`));
+app.get(["/", "/index.html"], sendApplication);
 app.use(
   express.static(path.resolve("dist"), {
-    index: "index.html",
+    index: false,
     fallthrough: true,
   }),
 );
-app.get(/.*/, (req, res) => res.sendFile(path.resolve("dist/index.html")));
+app.get(/.*/, sendApplication);
 app.use(
   (
     error: any,
@@ -1689,16 +1749,13 @@ app.use(
     res: express.Response,
     _next: express.NextFunction,
   ) => {
-    console.error(
-      "TrueCare API error:",
-      error instanceof Error ? error.message : error,
-    );
+    console.error("TrueCare API error:", error instanceof DomainError ? error.code : "SERVER_ERROR");
     const known = error instanceof DomainError;
     res
-      .status(known ? (error.code === "CONFLICT" ? 409 : error.status) : 500)
+      .status(known ? ({CONFLICT:409,REFERENCED:409,CUSTOMER_HAS_HISTORY:409,CATALOG_IN_USE:409,FORBIDDEN:403,RATE_LIMIT:429,SESSION_EXPIRED:401}[error.code] ?? error.status) : 500)
       .json({
         error: {
-          code: known ? error.code : "SERVER_ERROR",
+          code: known ? (['CUSTOMER_HAS_HISTORY','CATALOG_IN_USE'].includes(error.code)?'REFERENCED':error.code) : "SERVER_ERROR",
           message: known
             ? error.message
             : "Không thể hoàn tất thao tác. Dữ liệu chưa bị thay đổi.",

@@ -33,7 +33,7 @@ export function assert(
   message: string,
   code = "INVALID",
 ): asserts test {
-  if (!test) throw new DomainError(code, message);
+  if (!test) throw new DomainError(code, message, {FORBIDDEN:403,CONFLICT:409,REFERENCED:409,RATE_LIMIT:429,SESSION_EXPIRED:401}[code] ?? 400);
 }
 const id = () => randomUUID();
 const date = () =>
@@ -223,7 +223,7 @@ export function parseOrderLines(
   );
   return input.map((x) => {
     const p = found(s.products, x.productId);
-    assert(!p.archived, "Sản phẩm đã lưu trữ");
+    assert(!p.archived && !p.deletedAt, "Sản phẩm đã ngừng kinh doanh hoặc bị xóa", "CONFLICT");
     const q = positiveQuantity(x.quantity);
     const price = D(x.price ?? p.price ?? 0);
     assert(price.gte(0), "Giá bán không được âm");
@@ -498,7 +498,7 @@ export function execute(
           !s.inventoryMovements.some((movement) => movement.productId === product.id) &&
           !s.inventory.some((stock) => stock.productId === product.id && stock.quantity !== 0),
         "Sản phẩm còn toa, chương trình hoặc lịch sử kho nên không thể xoá vĩnh viễn",
-        "PRODUCT_HAS_HISTORY",
+        "REFERENCED",
       );
       const reason = String(p.reason ?? "").trim();
       assert(reason.length >= 3, "Cần lý do xoá vĩnh viễn");
@@ -554,7 +554,7 @@ export function execute(
         storeType: String(x.storeType ?? ""),
         notes: String(x.notes ?? ""),
         openedDate: validDate(x.openedDate ?? date()),
-        archived: !!x.archived,
+        archived: false,
         createdBy: old ? old.createdBy : actor?.id,
         createdAt: old
           ? old.createdAt
@@ -603,7 +603,7 @@ export function execute(
         !s.orders.some((order) => order.customerId === customer.id) &&
           !s.visits.some((visit) => visit.customerId === customer.id),
         "Khách hàng còn lịch sử nên không thể xoá vĩnh viễn",
-        "CUSTOMER_HAS_HISTORY",
+        "REFERENCED",
       );
       const reason = String(p.reason ?? "").trim();
       assert(reason.length >= 3, "Cần lý do xoá vĩnh viễn");
@@ -653,12 +653,34 @@ export function execute(
           next.visitDays.length === 6,
         "Cần đủ huyện, loại cửa hiệu và Thứ Hai đến Thứ Bảy",
       );
+      assert(next.visitDays.every((value,index)=>value===current.visitDays[index]),
+        "Lịch ghé gắn với thứ trong tuần; không được đổi thứ tự hoặc thay tên tại đây", "CONFLICT");
+      const linkedFields = {districts:'district',storeTypes:'storeType',routes:'route',frequencies:'frequency'} as const;
+      for (const [key,field] of Object.entries(linkedFields)) {
+        const removed=current[key as keyof typeof linkedFields].filter(value=>!next[key as keyof typeof linkedFields].includes(value));
+        assert(!s.customers.some(customer=>removed.includes(customer[field as typeof linkedFields[keyof typeof linkedFields]]!)),
+          "Danh mục còn được khách hàng sử dụng; hãy đổi tên có kiểm soát", "REFERENCED");
+      }
+      const productFields = {brands:'brand',groups:'group',units:'unit'} as const;
+      for (const [key,field] of Object.entries(productFields)) {
+        const removed=current[key as keyof typeof productFields].filter(value=>!next[key as keyof typeof productFields].includes(value));
+        assert(!s.products.some(product=>removed.includes(product[field as typeof productFields[keyof typeof productFields]])),
+          "Danh mục còn được sản phẩm sử dụng; hãy đổi tên có kiểm soát", "REFERENCED");
+      }
       s.catalogs = next;
+      s.catalogEntries=Object.entries(next).flatMap(([kind,values])=>values.map((value,position)=>{
+        const old=s.catalogEntries?.find(entry=>entry.kind===kind&&entry.value===value);
+        const active=p.entryStatus?.[kind]?.[value];
+        assert(active===undefined||typeof active==='boolean','Trạng thái danh mục không hợp lệ');
+        assert(kind!=='visitDays'||active!==false,'Không ngừng sử dụng thứ trong tuần','CONFLICT');
+        return {id:old?.id??id(),kind:kind as keyof typeof next,value,position,active:active??old?.active??true};
+      }));
       break;
     }
     case "renameCatalog": {
       assert(actor?.role === "admin", "Chỉ admin được đổi tên danh mục", "FORBIDDEN");
       const kind = String(p.kind ?? "") as keyof typeof defaultCatalogs;
+      assert(kind !== 'visitDays', "Không đổi tên thứ trong tuần", "CONFLICT");
       const oldValue = String(p.oldValue ?? "").trim();
       const newValue = String(p.newValue ?? "").trim();
       const reason = String(p.reason ?? "").trim();
@@ -667,6 +689,7 @@ export function execute(
       assert(newValue && newValue.length <= 120 && reason.length >= 3, "Tên mới hoặc lý do không hợp lệ");
       assert(!catalogs[kind].includes(newValue), "Tên danh mục mới đã tồn tại");
       catalogs[kind] = catalogs[kind].map((value) => value === oldValue ? newValue : value) as never;
+      if(s.catalogEntries) s.catalogEntries=s.catalogEntries.map(entry=>entry.kind===kind&&entry.value===oldValue?{...entry,value:newValue}:entry);
       const customerFields: Partial<Record<keyof typeof defaultCatalogs, "district"|"storeType"|"route"|"frequency">> = { districts: "district", storeTypes: "storeType", routes: "route", frequencies: "frequency" };
       const productFields: Partial<Record<keyof typeof defaultCatalogs, "brand"|"group"|"unit">> = { brands: "brand", groups: "group", units: "unit" };
       const customerField = customerFields[kind];
@@ -679,7 +702,8 @@ export function execute(
     }
     case "saveOrder": {
       const x = p.order ?? p;
-      found(s.customers, x.customerId);
+      const customer = found(s.customers, x.customerId);
+      assert(!customer.archived && !customer.deletedAt && !customer.mergedInto, "Khách hàng không còn hoạt động", "CONFLICT");
       const old = x.id ? found(s.orders, x.id) : undefined;
       assert(!old || old.status === "draft", "Chỉ được sửa trực tiếp toa nháp");
       const item: Order = {
@@ -991,8 +1015,9 @@ export function execute(
       });
       break;
     }
-    case "recordVisit":
-      found(s.customers, p.customerId);
+    case "recordVisit": {
+      const customer=found(s.customers, p.customerId);
+      assert(!customer.archived&&!customer.deletedAt&&!customer.mergedInto,"Khách hàng không còn hoạt động","CONFLICT");
       s.visits.push({
         id: id(),
         customerId: p.customerId,
@@ -1000,6 +1025,7 @@ export function execute(
         notes: String(p.notes ?? ""),
       });
       break;
+    }
     case "updateSettings": {
       const x = p.settings ?? p;
       const allowed = [
@@ -1087,9 +1113,11 @@ export function execute(
       );
       const count = positiveQuantity(p.count ?? 1);
       assert(count <= prog.remaining, "Vượt số suất còn lại");
-      found(s.customers, p.customerId);
+      const customer=found(s.customers, p.customerId);
+      assert(!customer.deletedAt&&!customer.mergedInto&&!customer.archived,"Khách hàng không còn hoạt động","CONFLICT");
       for (const l of prog.lines) {
         const prod = found(s.products, l.productId);
+        assert(!prod.archived&&!prod.deletedAt,"Sản phẩm không còn kinh doanh","CONFLICT");
         assert(
           prod.cost === l.cost && prod.price === l.ceiling,
           "Bảng giá đã thay đổi, hãy tạo lại chương trình",

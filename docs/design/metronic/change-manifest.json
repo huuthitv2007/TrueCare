@@ -1,0 +1,289 @@
+{
+  "backup": "C:\\Users\\ZGAMESVN\\Downloads\\TrueCare-backup-metronic-20260912-004303",
+  "baselineHead": "0cbf0b6bb41a08afe7b7ad9a392a67dd527e4710",
+  "logoUnchanged": true,
+  "files": [
+    {
+      "path": "e2e/metronic-business.spec.ts",
+      "change": "added",
+      "before": null,
+      "after": "063570cc0f3a176e2d317348f174651e4af183c46da8121a0c7cbd77363bdc03"
+    },
+    {
+      "path": "e2e/metronic-fixture.ts",
+      "change": "added",
+      "before": null,
+      "after": "3649e2964201c015658a8c02bc899978c74286f3ac1e4249e035ee6bc968cd18"
+    },
+    {
+      "path": "e2e/metronic-interactions.spec.ts",
+      "change": "added",
+      "before": null,
+      "after": "1c99726b11c4f2fb69d8fbcbe351470bcc9df227d55c918297cbefdf07136ecd"
+    },
+    {
+      "path": "e2e/metronic-matrix.spec.ts",
+      "change": "added",
+      "before": null,
+      "after": "63b3def74c7ec18443831dfae7d5d2ddd4347345229fb448855d83c8d487e939"
+    },
+    {
+      "path": "public/fonts/OFL.txt",
+      "change": "added",
+      "before": null,
+      "after": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a"
+    },
+    {
+      "path": "public/fonts/inter-latin-2.woff2",
+      "change": "added",
+      "before": null,
+      "after": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62"
+    },
+    {
+      "path": "public/fonts/inter-latin-ext-1.woff2",
+      "change": "added",
+      "before": null,
+      "after": "34b9c504cab7a73e37b746343a449132e56cf7b5481af2cb81dc74dcff25c956"
+    },
+    {
+      "path": "public/fonts/inter-vietnamese-0.woff2",
+      "change": "added",
+      "before": null,
+      "after": "5c66f9e07e90c6d4ac4922cc68d60de26c17b1858e677fb5e603fce3952b3ff2"
+    },
+    {
+      "path": "public/fonts/inter.css",
+      "change": "added",
+      "before": null,
+      "after": "dcadedf20458712f1429c89e11f10e81b716a9ac99a9bcc2a9dbb3215a5a7e8a"
+    },
+    {
+      "path": "public/metronic/keenicons/fonts/keenicons-filled.woff",
+      "change": "added",
+      "before": null,
+      "after": "210a6638845f65e8cb0f8893f09e6628ce9bf0fa68744d2b3b991a594f17915b"
+    },
+    {
+      "path": "public/metronic/keenicons/styles.bundle.css",
+      "change": "added",
+      "before": null,
+      "after": "f5a1447f5ec126222a38cfbd932d2881e110a76fa2048f22245131663d6e0b47"
+    },
+    {
+      "path": "public/print-order.css",
+      "change": "modified",
+      "before": "d14ec4c6e199c755f7f4c50536ae739ef90f90376fc8de76010d42c1802efe04",
+      "after": "1abd1290106a80ab528e652b78ffa41c2b7c8142659c2bdfbc71ac2e12edebea"
+    },
+    {
+      "path": "public/print-order.js",
+      "change": "added",
+      "before": null,
+      "after": "8093f6cc4ea2b4aff79be75e0188ec8bd86cc7c54603c5c21c03b5282ca5e10b"
+    },
+    {
+      "path": "src/AppShell.tsx",
+      "change": "added",
+      "before": null,
+      "after": "5e97f63b159591648d971d06a0a77c4f77d6e38bb99eafc57cc440092b080344"
+    },
+    {
+      "path": "src/Brand.tsx",
+      "change": "added",
+      "before": null,
+      "after": "9c44eb41c0248f102f1af53be2f88542848d761af98f2994fe231b92f1d27704"
+    },
+    {
+      "path": "src/ErrorBoundary.tsx",
+      "change": "modified",
+      "before": "7f38de9d3eb4d1939ca122140cbb11165c2042288bf79cccd8ea3b08186dc010",
+      "after": "a3727265c3c6a79f5d7d39165092a202101db3a4db6abd9d08b504bea7c71ce8"
+    },
+    {
+      "path": "src/features/WorkspacePages.tsx",
+      "change": "added",
+      "before": null,
+      "after": "4a62b8dee6a25bc41026431f5d45f9792999cfe9cb301ff15d8ff9950ae3d968"
+    },
+    {
+      "path": "src/icons.tsx",
+      "change": "added",
+      "before": null,
+      "after": "d8a7f354bffae2d911a9ee90f4a3560a0c59118abf143748e061c7014d9e1b84"
+    },
+    {
+      "path": "src/styles/metronic/config.css",
+      "change": "added",
+      "before": null,
+      "after": "a593dc91cf5f562ba5a1709ce4beff64543f106a8584c00106e4aa86f7932287"
+    },
+    {
+      "path": "src/styles/metronic/container.css",
+      "change": "added",
+      "before": null,
+      "after": "d1d8ec89c1de5fbe651855835e51e1ee397ab0c11c3e1a4d39c2fc93415d2840"
+    },
+    {
+      "path": "src/styles/metronic/layout-1.css",
+      "change": "added",
+      "before": null,
+      "after": "8966375aefc686adaf563b2680b7082aabb89a9ad1eb85a1fe1bf2a9535298d0"
+    },
+    {
+      "path": "src/styles/metronic/menu.css",
+      "change": "added",
+      "before": null,
+      "after": "a19dff4f011f1326afdeb22974bc6f2e1c5ec0f8a6d3ba8562e89a82d90ae753"
+    },
+    {
+      "path": "src/styles/workspace.css",
+      "change": "added",
+      "before": null,
+      "after": "f3df726f3264861638dc42b48f0ae3b5675b392e0e8e618254c9976c46b6c83c"
+    },
+    {
+      "path": "src/theme.ts",
+      "change": "added",
+      "before": null,
+      "after": "73a95b8bd4e6356a96e5d052edd80076b731ccf46f21e70610d0de3ca2a3fa7d"
+    },
+    {
+      "path": "docs/design/dashboard-concept.png",
+      "change": "removed",
+      "before": "a99fe5acadaa041348b991a91d1013f65ff231cccd3b46e86aec331d69ec7db2",
+      "after": null
+    },
+    {
+      "path": "docs/design/implementation-notes.md",
+      "change": "modified",
+      "before": "7d7fa372d0ad6635edff8d59744d74637aa78792acf3b03c153dc79a3a396524",
+      "after": "6c3322ebc3dadcc69cc344646475d0d573f1881277dd70ab6bff6d894ccde8f1"
+    },
+    {
+      "path": "e2e/theme-responsive.spec.ts",
+      "change": "modified",
+      "before": "fb8fcf99042c257d17d13545e199eec19f87ca39c85b00920c6f6003f07e0e96",
+      "after": "0dbc40b10669127a4aa43a7e5bdbfac6b13d5f149dbcf3a6145bc5b246e00c4a"
+    },
+    {
+      "path": "index.html",
+      "change": "modified",
+      "before": "425995d38afe1aeed14071816ef5c924e2e58acc4f87d7a159c045b359d59ed8",
+      "after": "94cbdcaaceca7714df705c88207b2e84b7e257002eeb4bc0d996715cbcb38ec7"
+    },
+    {
+      "path": "package-lock.json",
+      "change": "modified",
+      "before": "43f46c47414d3fa158218d30e85a028ae038a30f5362941fa53ddc41ce9c7860",
+      "after": "61cee1dec3309d1bb918fd34638d9055171216124ac6809e1bba8e396039d426"
+    },
+    {
+      "path": "package.json",
+      "change": "modified",
+      "before": "83bc19b38975064644afa3b366a6a6bdea31a995e4a106773ed3463ec86e4d60",
+      "after": "68579ced50c991d097b05749ff224d2770c7b09ce02b1c9b1d479a03ba3bd80e"
+    },
+    {
+      "path": "playwright.config.ts",
+      "change": "modified",
+      "before": "6e00bd9ea5bf140c73b15fb5bd21fe8638b9f7db3f6508f258eba90390d2a8a7",
+      "after": "3d456675d213219cf1161491b0e8b209f3c62c961230f7ee41d03ada9e3a393d"
+    },
+    {
+      "path": "public/theme-init.js",
+      "change": "modified",
+      "before": "bb8f0fd04d972c1129978d806b0e874687c30263139738648c783d586fe09894",
+      "after": "4a1b308587bcf073c604b2ca0ae4642a35a5504fd2787e38ce7a5c36f735367e"
+    },
+    {
+      "path": "src/admin.css",
+      "change": "removed",
+      "before": "ac33f18c0501881532c842f3504d3b9393f186954b1eb628dc44aaf6ae8fc543",
+      "after": null
+    },
+    {
+      "path": "src/features/Admin.tsx",
+      "change": "modified",
+      "before": "28d57018e91b110f28df841a2c04291b5f0d7720f42acffaf1b97f88b44cd415",
+      "after": "8b59e4eefad538b23fdce8c4bdd48292ac2198e290ab9faf35c34e95d157fed6"
+    },
+    {
+      "path": "src/features/Auth.tsx",
+      "change": "modified",
+      "before": "a98fce1cbdcb47f5e27fa1742870e448b44bd9cd2a1b1f8dba76e5732abc9571",
+      "after": "42ca4494826045b4ee15285e6626d86ee7aa1e88e70042f9a7ef24511360e2c7"
+    },
+    {
+      "path": "src/features/Catalog.tsx",
+      "change": "modified",
+      "before": "fb720fc7195a1210733bcd9c05aa59584f4eafb2efe71d32254a1581af5a0d50",
+      "after": "d0f93becf085769eea147ab8d9cdec17b5c2b75f7275b249c61b9867c34a7777"
+    },
+    {
+      "path": "src/features/Imports.tsx",
+      "change": "modified",
+      "before": "01279e1af67dc964b0ea474583cf02b0ee3a93a335e267f56c7c10f68a82215b",
+      "after": "d3f7267c97a70f06e7782ff2d64a49b362ca053978170cf193b1ba8396874c49"
+    },
+    {
+      "path": "src/features/Orders.tsx",
+      "change": "modified",
+      "before": "6b75a31f4c6572799331b30504c1ea65b3f833a09a4f7066746921bf05578686",
+      "after": "bb0fc5d5a05707c7ef0f4233d20f06b4fee7089cb836aede5ae165808cebb13c"
+    },
+    {
+      "path": "src/features/Profile.tsx",
+      "change": "modified",
+      "before": "11c7da24bb8affad23a862f226c3d1740a47f2fe443f18d5707cf3cba7472759",
+      "after": "472142e77bf1b6d0a4d18ace750544034701d392ef0395fda09dac3c9f1e65d2"
+    },
+    {
+      "path": "src/features/SalesReport.tsx",
+      "change": "modified",
+      "before": "c7b73c36da60e73816d70a58ca773689ff1a699df6fa1c03fde8721a65e1827b",
+      "after": "881fc3ea373b4ee2cf33f7a1ddcfe14a50c099d9bfd0383f3d4d53558cbaa478"
+    },
+    {
+      "path": "src/main.tsx",
+      "change": "modified",
+      "before": "07038c4332437bb137ec7603fe3ebddd4fa30d77f6e58d241cc87aae0a99cd26",
+      "after": "d850a5d8a6f9e1b7053b29a885e53ad48cb7fd87462a8024f9cdcbd2f3812f95"
+    },
+    {
+      "path": "src/styles.css",
+      "change": "modified",
+      "before": "841220f87e2f1043204b0110fc156bb0e012aaee59d25a752245508237def343",
+      "after": "ff8cb9c2c2b6b94e8bf54c1c1cee0314bf9bff08bed21cfd80a4ea0846c1b8c5"
+    },
+    {
+      "path": "src/styles/layout.css",
+      "change": "removed",
+      "before": "a8f4b6fbe69a135b0c51f670b0f3ea934f1eca4d6816dc33016842e760ac4be9",
+      "after": null
+    },
+    {
+      "path": "src/styles/legacy.css",
+      "change": "removed",
+      "before": "a15cf3806ce55441ab63a985a2e0d043dcd6c7d0cee7cfdc930a5d20ad42b86a",
+      "after": null
+    },
+    {
+      "path": "src/styles/tokens.css",
+      "change": "removed",
+      "before": "486d3b8a4a92eb121182b5f5fcb0b73f49b7a442c848efff4286f30847e9b3cf",
+      "after": null
+    },
+    {
+      "path": "src/ui.tsx",
+      "change": "modified",
+      "before": "b211de9890fce73c4db20073bc0e9f5bdf180a6c3c967162229c6178e3aa6044",
+      "after": "e56ffb1d42f3e7553e15f5a6cacba5c4e956750a85e9f53ced43e6abd2c3b0c3"
+    },
+    {
+      "path": "vite.config.ts",
+      "change": "modified",
+      "before": "1bfc312ff86004e9b4b25a196df0ac0d692ea25faed295103df8fa9189fa2583",
+      "after": "f9bad992b62881b1e43a677eeee230a1d0def01c7dcb2f0fc00453c011e3b627"
+    }
+  ]
+}

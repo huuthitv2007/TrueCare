@@ -1,0 +1,97 @@
+@import url("/fonts/inter.css");
+@page {
+  size: A4;
+  margin: 16mm;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  font:
+    13px/1.6 Inter,
+    system-ui,
+    sans-serif;
+  margin: 0;
+  padding: 24px;
+  color: #18181b;
+  background: white;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid #3b82f6;
+}
+header img {
+  object-fit: contain;
+  flex-shrink: 0;
+}
+h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+p {
+  margin: 8px 0;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th,
+td {
+  padding: 12px;
+  border-bottom: 1px solid #e4e4e7;
+  text-align: left;
+}
+th {
+  background: #f4f4f5;
+  color: #52525b;
+  font-weight: 500;
+}
+th:nth-last-child(-n + 2),
+td:nth-last-child(-n + 2) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.total {
+  text-align: right;
+  font-size: 18px;
+  margin-top: 24px;
+}
+thead {
+  display: table-header-group;
+}
+tr {
+  break-inside: avoid;
+}
+@media print {
+  body {
+    padding: 0;
+  }
+  header {
+    break-after: avoid;
+  }
+  .total {
+    break-inside: avoid;
+  }
+}
+@media screen and (max-width: 600px) {
+  body {
+    padding: 12px;
+  }
+  header {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  h1 {
+    font-size: 18px;
+  }
+  th,
+  td {
+    padding: 8px;
+    font-size: 11px;
+  }
+}

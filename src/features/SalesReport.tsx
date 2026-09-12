@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronRight, Filter, RotateCcw } from "lucide-react";
+import { ChevronRight, Filter, RotateCcw } from '../icons';
 import type { ReportMode, ReportRow } from "../lib/reporting";
 import {
   dimensionLabels,
@@ -263,7 +263,7 @@ function Detail({ rows, onClose }: { rows: ReportRow[]; onClose: () => void }) {
   const navigate = useNavigate();
   return (
     <Modal title="Chi tiết doanh số" onClose={onClose} wide>
-      <div className="table-scroll">
+      <div className="table-scroll" tabIndex={0} role="region" aria-label="Bảng dữ liệu có thể cuộn">
         <table>
           <thead>
             <tr>

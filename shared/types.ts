@@ -1,4 +1,4 @@
-import type { Catalogs } from "./catalogs.js";
+import type { Catalogs, CatalogEntry } from "./catalogs.js";
 export type Money = string;
 export type UserRole = "admin" | "employee";
 export interface User {
@@ -233,6 +233,7 @@ export interface AppState {
   sharedVersion?: number;
   inventoryVersion?: number;
   catalogs?: Catalogs;
+  catalogEntries?: CatalogEntry[];
   products: Product[];
   customers: Customer[];
   orders: Order[];

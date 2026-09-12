@@ -1,12 +1,17 @@
-import { useState, type FormEvent } from "react";
-import { KeyRound, LogOut, ShieldCheck } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { KeyRound, LogOut, ShieldCheck } from '../icons';
 import { request, useWorkspace } from "../api";
-import { Button, Card, Field, Heading, Modal, Notice } from "../ui";
+import { Button, Card, DecisionModal, Field, Heading, Modal, Notice } from "../ui";
 
 export function Profile() {
   const { state, command, busy, notify } = useWorkspace();
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [revoking, setRevoking] = useState<any>(null);
   const [error, setError] = useState("");
+  const loadSessions = () => request<{items:any[]}>("/api/auth/sessions").then((result) => setSessions(result.items)).catch((cause) => notify(cause.message));
+  useEffect(() => { void loadSessions(); }, []);
   const save = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -46,7 +51,6 @@ export function Profile() {
     }
   };
   const logoutAll = async () => {
-    if (!confirm("Đăng xuất tài khoản khỏi tất cả thiết bị?")) return;
     try {
       await request("/api/auth/logout-all", {});
       location.assign("/");
@@ -117,6 +121,9 @@ export function Profile() {
           </Button>
         </form>
       </Card>
+      <Card title="Phiên đăng nhập" subtitle="Tối đa 20 phiên đang hoạt động gần nhất.">
+        {sessions.length ? <div className="summary-list">{sessions.map((item) => <div key={item.id}><span><strong>{item.current ? "Thiết bị này" : "Thiết bị khác"}</strong><small>{item.user_agent || "Không có thông tin trình duyệt"} · hoạt động {new Date(item.last_seen_at).toLocaleString("vi-VN")}</small></span><Button onClick={() => setRevoking(item)}>Thu hồi</Button></div>)}</div> : <p>Chưa có phiên được ghi nhận. Các phiên cũ sẽ xuất hiện sau lần đăng nhập tiếp theo.</p>}
+      </Card>
       <Card
         title="Bảo mật"
         subtitle="Mật khẩu chỉ được xác thực ở Supabase Auth và không xuất hiện trong nhật ký."
@@ -136,7 +143,7 @@ export function Profile() {
             <KeyRound size={16} />
             Đổi mật khẩu
           </Button>
-          <Button onClick={() => void logoutAll()}>
+          <Button onClick={() => setLogoutOpen(true)}>
             <LogOut size={16} />
             Đăng xuất mọi thiết bị
           </Button>
@@ -183,6 +190,8 @@ export function Profile() {
           </form>
         </Modal>
       )}
+      {logoutOpen && <DecisionModal title="Đăng xuất mọi thiết bị" description="Mọi phiên đăng nhập hiện có, gồm thiết bị này, sẽ bị thu hồi." confirmLabel="Đăng xuất" danger onClose={() => setLogoutOpen(false)} onConfirm={logoutAll}/>}
+      {revoking && <DecisionModal title="Thu hồi phiên đăng nhập" description={revoking.current ? "Bạn sẽ đăng xuất khỏi thiết bị này." : "Thiết bị đã chọn sẽ phải đăng nhập lại."} confirmLabel="Thu hồi" danger onClose={() => setRevoking(null)} onConfirm={async () => { const result = await request<{current:boolean}>(`/api/auth/sessions/${revoking.id}`, {}, "DELETE"); if (result.current) location.assign("/"); else await loadSessions(); }}/>}
     </>
   );
 }

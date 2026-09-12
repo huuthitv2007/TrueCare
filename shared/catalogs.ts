@@ -27,3 +27,7 @@ export const defaultCatalogs = {
   frequencies: ["Hằng tuần", "Hai tuần", "Hằng tháng"],
 };
 export type Catalogs = typeof defaultCatalogs;
+export interface CatalogEntry { id:string; kind:keyof Catalogs; value:string; position:number; active:boolean }
+export function activeCatalogs(catalogs:Catalogs, entries:CatalogEntry[] = []):Catalogs {
+ return Object.fromEntries(Object.entries(catalogs).map(([kind,values])=>[kind,kind==='visitDays'?values:values.filter(value=>!entries.some(entry=>entry.kind===kind&&entry.value===value&&!entry.active))])) as Catalogs;
+}

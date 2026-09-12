@@ -1,9 +1,10 @@
 import type { AppState, Customer, Product } from "../shared/types.js";
-import { defaultCatalogs, type Catalogs } from "../shared/catalogs.js";
+import { defaultCatalogs, type Catalogs, type CatalogEntry } from "../shared/catalogs.js";
 export interface Directory {
   products: Product[];
   customers: Customer[];
   catalogs: Catalogs;
+  catalogEntries?: CatalogEntry[];
 }
 export const emptyDirectory = (): Directory => ({
   products: [],
@@ -15,6 +16,7 @@ export function directoryOf(s: AppState): Directory {
     products: s.products,
     customers: s.customers,
     catalogs: s.catalogs ?? structuredClone(defaultCatalogs),
+    catalogEntries: s.catalogEntries,
   };
 }
 export function attachDirectory(
@@ -23,6 +25,16 @@ export function attachDirectory(
   version: number,
 ): AppState {
   return { ...s, ...data, sharedVersion: version };
+}
+/** Mirrors migration 009: archive is no longer a customer lifecycle state. */
+export function reactivateArchivedCustomers(customers: Customer[]) {
+  let restored = 0;
+  const next = customers.map((customer) => {
+    if (!customer.archived || customer.deletedAt || customer.mergedInto) return customer;
+    restored += 1;
+    return { ...customer, archived: false };
+  });
+  return { customers: next, restored };
 }
 /** Preserve every original identity, including equal names/codes with different prices. */
 export function migrateDirectory(states: { owner: string; state: AppState }[]) {

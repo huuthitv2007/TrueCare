@@ -26,6 +26,24 @@ const command = (
     { id: role === "admin" ? "admin-id" : "employee-id", role },
   );
 
+test("admin cannot reorder weekdays or remove a catalog entry still used by a customer", () => {
+ let state=emptyState();
+ state=command(state,'saveCustomer',{name:'Khách liên kết',district:'Càng Long'});
+ assert.throws(()=>command(state,'saveCatalog',{districts:state.catalogs!.districts.filter(value=>value!=='Càng Long')}),/còn được khách hàng sử dụng/);
+ assert.throws(()=>command(state,'saveCatalog',{visitDays:[...state.catalogs!.visitDays].reverse()}),/thứ trong tuần/);
+});
+
+test('catalog records retain identity and inactive state across reordering and rename',()=>{
+ let state=command(emptyState(),'saveCatalog',{routes:['Tuyến A','Tuyến B'],entryStatus:{routes:{'Tuyến A':false}}});
+ const entry=state.catalogEntries!.find(item=>item.value==='Tuyến A')!;
+ state=command(state,'saveCatalog',{routes:['Tuyến B','Tuyến A']});
+ assert.equal(state.catalogEntries!.find(item=>item.value==='Tuyến A')!.id,entry.id);
+ assert.equal(state.catalogEntries!.find(item=>item.value==='Tuyến A')!.active,false);
+ state=command(state,'renameCatalog',{kind:'routes',oldValue:'Tuyến A',newValue:'Tuyến C',reason:'Đổi tên tuyến'});
+ assert.equal(state.catalogEntries!.find(item=>item.value==='Tuyến C')!.id,entry.id);
+ assert.equal(state.catalogEntries!.find(item=>item.value==='Tuyến C')!.active,false);
+});
+
 test("admin đưa khách vào thùng rác, khôi phục và chỉ purge khách không có lịch sử", () => {
   let state = emptyState();
   state = command(state, "saveCustomer", { name: "Khách không dùng" });
@@ -53,6 +71,14 @@ test("nhân viên không thể xóa khách và mã sản phẩm đang kinh doanh
     () => command(state, "saveProduct", { name: "Sản phẩm B", code: "tc-01", pack: 1 }),
     /Mã sản phẩm/,
   );
+});
+
+test("lưu hồ sơ không thể tạo lại trạng thái lưu trữ khách hàng", () => {
+  let current = emptyState();
+  current = command(current, "saveCustomer", { name: "Khách đang hoạt động" });
+  const customer = current.customers[0];
+  current = command(current, "saveCustomer", { customer: { ...customer, archived: true } });
+  assert.equal(current.customers[0].archived, false);
 });
 
 test("thống kê admin phát hiện khách trùng, quỹ âm, toa giao dở và phân trang", () => {

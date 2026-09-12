@@ -1,3 +1,7 @@
-﻿@import './styles/tokens.css';
-@import './styles/legacy.css';
-@import './styles/layout.css';
+@import 'tailwindcss' source('../src');
+@import './styles/metronic/config.css';
+@import '@keenthemes/ktui/styles.css';
+@import './styles/metronic/container.css';
+@import './styles/metronic/menu.css';
+@import './styles/metronic/layout-1.css';
+@import './styles/workspace.css';

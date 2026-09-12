@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { emptyState, execute } from "../server/domain.js";
-import { migrateDirectory, attachDirectory } from "../server/shared-directory.js";
+import { migrateDirectory, attachDirectory, reactivateArchivedCustomers } from "../server/shared-directory.js";
 
 test("chuyển dữ liệu cũ sang danh mục chung giữ nguyên mọi liên kết và không gộp trùng tên", () => {
   const create = (owner: string) => {
@@ -35,4 +35,21 @@ test("chuyển dữ liệu cũ sang danh mục chung giữ nguyên mọi liên k
     assert.ok(attached.products.some((p) => p.id === entry.state.orders[0].lines[0].productId));
     assert.ok(attached.customers.some((c) => c.id === entry.state.orders[0].customerId));
   }
+});
+
+test("khôi phục khách lưu trữ nhưng giữ nguyên khách trong thùng rác hoặc đã gộp", () => {
+  const base = {
+    id: "base", name: "Khách", contact: "", phone: "", email: "", address: "",
+    street: "", ward: "", district: "", province: "", route: "", visitDays: [],
+    frequency: "", storeType: "", notes: "", openedDate: "2026-09-11", archived: true,
+  };
+  const { customers, restored } = reactivateArchivedCustomers([
+    { ...base, id: "archived" },
+    { ...base, id: "deleted", deletedAt: "2026-09-11T00:00:00Z" },
+    { ...base, id: "merged", mergedInto: "other" },
+  ]);
+  assert.equal(restored, 1);
+  assert.equal(customers[0].archived, false);
+  assert.equal(customers[1].archived, true);
+  assert.equal(customers[2].archived, true);
 });

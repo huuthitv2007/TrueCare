@@ -249,7 +249,7 @@ app.use("/api", (req, res, next) => {
   if (!user) {
     res
       .status(401)
-      .json({ error: { code: "AUTH", message: "Vui lòng đăng nhập" } });
+      .json({ error: { code: "SESSION_EXPIRED", message: "Vui lòng đăng nhập" } });
     return;
   }
   res.locals.user = user;
@@ -289,6 +289,20 @@ app.post("/api/auth/revoke-sessions", (req, res) => {
   res.json({ ok: true });
 });
 app.get("/api/state", (_req, res) => res.json(read(res.locals.user.id)));
+app.get('/api/auth/sessions', (req,res)=>{
+  const items=db.prepare('SELECT token,expires FROM sessions WHERE user_id=? AND expires>?').all(res.locals.user.id,Date.now()) as {token:string;expires:number}[];
+  res.json({items:items.map(item=>({id:item.token,current:item.token===hash(cookie(req)),user_agent:'Phiên cục bộ',last_seen_at:new Date(item.expires-7*86400000).toISOString()}))});
+});
+app.delete('/api/auth/sessions/:id',(req,res)=>{
+  db.prepare('DELETE FROM sessions WHERE token=? AND user_id=?').run(req.params.id,res.locals.user.id);
+  const current=req.params.id===hash(cookie(req));
+  if(current)res.clearCookie('tc_session',{path:'/'});
+  res.json({ok:true,current});
+});
+app.post('/api/auth/logout-all',(req,res)=>{
+  db.prepare('DELETE FROM sessions WHERE user_id=?').run(res.locals.user.id);
+  res.clearCookie('tc_session',{path:'/'});res.json({ok:true});
+});
 app.post(
   "/api/commands",
   asyncRoute((req, res) => {

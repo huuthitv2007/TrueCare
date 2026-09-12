@@ -15,6 +15,7 @@ test-results/
 *.sqlite*
 *.db*
 *.log
+*.tsbuildinfo
 /don_hang.txt
 /ghi_chu.txt
 /bao_cao_cuoi_ngay.txt

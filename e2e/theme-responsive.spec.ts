@@ -47,19 +47,17 @@ test("theme persists and the workspace remains responsive", async ({
   const viewport = page.viewportSize();
   if (viewport && viewport.width < 1024) {
     await page.getByRole("button", { name: "Mở menu" }).click();
-    await expect(page.locator(".sidebar")).toHaveCSS(
-      "transform",
-      "matrix(1, 0, 0, 1, 0, 0)",
-    );
+    await expect(page.getByRole('dialog', { name: 'Menu TrueCare' })).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(page.locator(".menu-backdrop")).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'Menu TrueCare' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Mở menu' })).toBeFocused();
   } else {
-    await expect(page.locator(".desktop-header")).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Điều hướng chính' })).toBeVisible();
   }
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   const duration = await page
-    .locator(".content > *")
+    .locator("#workspace-content > *")
     .first()
     .evaluate((node) => getComputedStyle(node).animationDuration);
   expect(["0s", "1e-05s", "0.00001s"]).toContain(duration);

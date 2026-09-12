@@ -10,12 +10,12 @@ toàn đội.
 Yêu cầu Node.js 24 trở lên.
 
 ```powershell
-npm install
+npm ci
 npm run dev
 ```
 
-Mở `http://127.0.0.1:5173`, đăng ký tài khoản TrueCare mới, rồi chọn **Nhập
-dữ liệu** để xem trước và nhập các tệp trong thư mục này. Bản cục bộ lưu SQLite
+Mở `http://127.0.0.1:5173`, đăng nhập bằng tài khoản đã được cấp, rồi chọn **Nhập
+dữ liệu** để xem trước và nhập tệp. Bản cục bộ lưu SQLite
 trong `.local-data/`; thư mục này đã được Git bỏ qua.
 
 Các đơn nhập từ lịch sử được lưu là **nháp**. Chúng không tăng quỹ khả dụng cho
@@ -27,12 +27,18 @@ Các đơn nhập từ lịch sử được lưu là **nháp**. Chúng không t�
 npm run typecheck
 npm run test
 npm run build
+npm run test:e2e
 ```
 
 Các kiểm tra hiện bao gồm quy đổi thùng/lẻ, KPI và quỹ theo thực giao, quà
 TrueCare tính KPI theo giá gốc, giao nhiều lần, trả hàng, sửa/xoá/khôi phục toa,
 hoàn kho không lặp, giới hạn hỗ trợ 200.000đ mỗi suất, trần giá chào, nhập
 Excel/TXT, phân quyền và báo cáo theo ngày giao/đặt.
+
+Playwright chạy trên cổng QA 5273/5311 với dữ liệu riêng trong
+`.local/metronic-qa-data`, không dùng dữ liệu làm việc ở `.local-data`.
+Giao diện Metronic Layout 1, ảnh đối chiếu và kết quả nghiệm thu được ghi tại
+[báo cáo giao diện](docs/design/metronic/acceptance.md).
 
 ## Triển khai dữ liệu thật
 

@@ -1,23 +1,11 @@
-# Thiết kế TrueCare
+# Giao diện TrueCare — Metronic Layout 1
 
-Concept: `dashboard-concept.png`, tạo bằng Image Gen trước khi dựng giao diện. Mục tiêu: ứng dụng thao tác số liệu nhân viên, giữ điều hướng và biểu mẫu theo kế hoạch; không dùng ảnh concept làm giao diện.
+Giao diện nhân viên, quản trị, đăng nhập và khôi phục mật khẩu sử dụng Metronic Layout 1 từ bộ template được cung cấp. Giữ React/TypeScript/Vite, route và luồng nghiệp vụ hiện có.
 
-## Hệ thống giao diện
+- Sidebar 280/80px trên desktop; drawer có quản lý focus dưới 1024px.
+- Inter và KeenIcons lưu trong project; theme sáng/tối theo tài khoản.
+- Logo TrueCare giữ nguyên file, tỷ lệ và màu sắc.
+- Form, bảng, bộ lọc, modal và mẫu in dùng cùng hệ thiết kế; bảng rộng cuộn trong vùng riêng.
+- Dữ liệu minh họa chỉ nằm trong fixture kiểm thử, không đưa vào dữ liệu ứng dụng.
 
-- Điều hướng xanh đậm #102c43, nền chính trắng, đường phân cách #e5eaf0.
-- Nút chính và số quỹ dương xanh #178366; quỹ âm có số âm và nhãn, màu đỏ.
-- Font sans-serif hỗ trợ tiếng Việt; cỡ nhập liệu tối thiểu 16px trên điện thoại; vùng bấm 44px.
-- Bảng số liệu dùng cột tiền căn phải, tiêu đề rõ; form và thông báo dùng cùng thành phần xuyên các phân hệ.
-- Dashboard: bộ lọc ngày, bốn chỉ tiêu, bảng đơn gần đây, tiến độ tháng/tuyến hôm nay, công việc cần xử lý.
-- Màn nhập đơn: ba tab DS khách hàng / Hóa đơn / Chi tiết theo cùng hệ thống, thanh tác vụ lưu/chốt và tổng tiền rõ ràng.
-- Mobile: nội dung một cột, thanh điều hướng dưới và menu cho các phân hệ còn lại.
-
-## Điều chỉnh có chủ đích so với ảnh concept
-
-- Ngày phải theo dữ liệu và thời điểm ứng dụng, không dùng ngày 2025 trong ảnh.
-- Mục tiêu tháng ban đầu 80.000.000đ theo kế hoạch, không lấy số 0 minh họa làm cấu hình.
-- Thông tin tài khoản lấy từ người đang đăng nhập; không dùng tên/mã nhân viên minh họa.
-- Bổ sung nhãn môi trường cục bộ để phân biệt bản thử và dữ liệu thật.
-- Dữ liệu trống không được tự thay bằng số bán hàng giả.
-
-Kiểm thử trình duyệt và đối chiếu hình ảnh được ghi trong báo cáo nghiệm thu sau khi dựng xong.
+Chi tiết triển khai, kiểm thử, ảnh đối chiếu, giới hạn xác minh và cách khôi phục nằm tại [báo cáo nghiệm thu](metronic/acceptance.md). [Nguồn tài nguyên](metronic/THIRD_PARTY.md) ghi phiên bản và bản quyền.

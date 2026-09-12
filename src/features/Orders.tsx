@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import Decimal from "decimal.js";
+import { readOrderDraft, discardOrderDraft } from "../lib/order-draft";
 import {
   Plus,
   Save,
@@ -12,7 +13,7 @@ import {
   Check,
   ArrowLeft,
   Gift,
-} from "lucide-react";
+} from "../icons";
 import type { Delivery, Order, OrderLine } from "../../shared/types";
 import { useWorkspace } from "../api";
 import {
@@ -20,6 +21,7 @@ import {
   Button,
   Card,
   DateRange,
+  DecisionModal,
   day,
   Empty,
   Field,
@@ -32,6 +34,7 @@ import {
   Pager,
   SearchBox,
   Status,
+  TextActionModal,
   today,
 } from "../ui";
 
@@ -148,7 +151,12 @@ export function OrderTable({ orders }: { orders: Order[] }) {
   const { state } = useWorkspace();
   const navigate = useNavigate();
   return (
-    <div className="table-scroll">
+    <div
+      className="table-scroll"
+      tabIndex={0}
+      role="region"
+      aria-label="Bảng dữ liệu có thể cuộn"
+    >
       <table>
         <thead>
           <tr>
@@ -210,21 +218,48 @@ type DraftLine = {
   returned?: number;
 };
 export function OrderEditor() {
-  const { state, command, busy, notify } = useWorkspace();
+  const { user, adminTarget } = useWorkspace();
+  const { id } = useParams();
+  return (
+    <OrderEditorContent
+      key={`${user.id}:${adminTarget?.id ?? user.id}:${id ?? "new"}`}
+    />
+  );
+}
+function OrderEditorContent() {
+  const { state, command, busy, notify, user, adminTarget } = useWorkspace();
   const { id } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const order = state.orders.find((o) => o.id === id && !o.deletedAt);
+  const draftKey = `truecare:order-draft:${user.id}:${adminTarget?.id ?? user.id}:${id ?? "new"}`;
+  const [recovered] = useState(() =>
+    order && order.status !== "draft"
+      ? null
+      : readOrderDraft(draftKey, order?.version),
+  );
   const [tab, setTab] = useState(id ? "invoice" : "customers");
   const [customerId, setCustomerId] = useState(
-    order?.customerId || params.get("customer") || "",
+    recovered?.customerId || order?.customerId || params.get("customer") || "",
   );
-  const [date, setDate] = useState(order?.date || today());
-  const [notes, setNotes] = useState(order?.notes || "");
+  const [date, setDate] = useState(recovered?.date || order?.date || today());
+  const [notes, setNotes] = useState(recovered?.notes ?? order?.notes ?? "");
   const [lines, setLines] = useState<DraftLine[]>(
-    () => order?.lines.map((l) => ({ ...l, fixedPrice: !!l.fixedPrice })) || [],
+    () =>
+      recovered?.lines ||
+      order?.lines.map((l) => ({ ...l, fixedPrice: !!l.fixedPrice })) ||
+      [],
   );
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useState(!!recovered);
+  const [textAction, setTextAction] = useState<null | {
+    type: "revise" | "cancel" | "delete";
+    confirmAfter?: boolean;
+  }>(null);
+  const [decision, setDecision] = useState<null | {
+    title: string;
+    description: string;
+    run: () => void;
+  }>(null);
   const [editingFinalized, setEditingFinalized] = useState(false);
   const [deliveryEdits, setDeliveryEdits] = useState(() =>
     state.deliveries
@@ -251,6 +286,7 @@ export function OrderEditor() {
   );
   useEffect(() => {
     if (order) {
+      if (recovered && order.version === recovered.version) return;
       setCustomerId(order.customerId);
       setDate(order.date);
       setNotes(order.notes);
@@ -280,19 +316,40 @@ export function OrderEditor() {
     window.addEventListener("beforeunload", fn);
     return () => window.removeEventListener("beforeunload", fn);
   }, [dirty]);
+  useEffect(() => {
+    try {
+      if ((!order || order.status === "draft") && dirty)
+        sessionStorage.setItem(
+          draftKey,
+          JSON.stringify({
+            customerId,
+            date,
+            notes,
+            lines,
+            version: order?.version,
+          }),
+        );
+      else if (!dirty) discardOrderDraft(draftKey);
+    } catch {
+      /* Storage may be unavailable; the server save remains usable. */
+    }
+  }, [customerId, date, notes, lines, dirty, draftKey, id]);
   function changeLine(index: number, patch: Partial<DraftLine>) {
     setLines((ls) => ls.map((l, i) => (i === index ? { ...l, ...patch } : l)));
     setDirty(true);
   }
   function selectCustomer(value: string) {
-    if (
-      dirty &&
-      value !== customerId &&
-      !confirm(
-        "Đổi khách hàng cho bản nháp đang nhập? Các dòng hàng được giữ lại.",
-      )
-    )
+    if (dirty && value !== customerId) {
+      setDecision({
+        title: "Đổi khách hàng",
+        description: "Các dòng hàng đang nhập được giữ lại cho khách hàng mới.",
+        run: () => applyCustomer(value),
+      });
       return;
+    }
+    applyCustomer(value);
+  }
+  function applyCustomer(value: string) {
     setCustomerId(value);
     setDirty(true);
     setTab("invoice");
@@ -344,13 +401,15 @@ export function OrderEditor() {
         ? s.minus(cost)
         : s;
   }, new Decimal(0));
-  async function save(confirmAfter = false) {
+  async function save(confirmAfter = false, revisionReason?: string) {
     setError("");
     try {
       let next;
       if (order && order.status !== "draft") {
-        const reason = prompt("Lý do sửa toa đã chốt:");
-        if (!reason?.trim()) return;
+        if (!revisionReason) {
+          setTextAction({ type: "revise", confirmAfter });
+          return;
+        }
         next = await command("reviseOrder", {
           order: {
             id: order.id,
@@ -360,7 +419,7 @@ export function OrderEditor() {
             lines,
             deliveries: deliveryEdits,
           },
-          reason,
+          reason: revisionReason,
         });
       } else {
         next = await command("saveOrder", {
@@ -371,6 +430,7 @@ export function OrderEditor() {
         ? next.orders.find((o) => o.id === order.id)
         : next.orders.at(-1);
       setDirty(false);
+      discardOrderDraft(draftKey);
       setEditingFinalized(false);
       if (saved && confirmAfter)
         await command("confirmOrder", { id: saved.id });
@@ -384,6 +444,7 @@ export function OrderEditor() {
       );
     } catch (e) {
       setError((e as Error).message);
+      if (revisionReason) throw e;
     }
   }
   async function confirmExisting() {
@@ -395,22 +456,21 @@ export function OrderEditor() {
     }
   }
   async function cancel() {
-    const reason = prompt("Lý do hủy phần chưa giao của đơn:");
-    if (!reason) return;
+    setTextAction({ type: "cancel" });
+  }
+  async function cancelWithReason(reason: string) {
     try {
       await command("cancelOrder", { id: order!.id, reason });
       notify("Đã hủy phần chưa giao; lịch sử thực giao được giữ.");
     } catch (e) {
       setError((e as Error).message);
+      throw e;
     }
   }
   async function removeOrder() {
-    const reason = prompt(
-      order?.status === "draft"
-        ? "Lý do xoá bản nháp:"
-        : "Lý do xoá toa (KPI, quỹ và kho sẽ được tính lại):",
-    );
-    if (!reason?.trim()) return;
+    setTextAction({ type: "delete" });
+  }
+  async function removeOrderWithReason(reason: string) {
     try {
       await command("deleteOrder", { id: order!.id, reason });
       notify(
@@ -421,6 +481,7 @@ export function OrderEditor() {
       navigate("/orders");
     } catch (e) {
       setError((e as Error).message);
+      throw e;
     }
   }
   return (
@@ -437,8 +498,14 @@ export function OrderEditor() {
           <>
             <Button
               onClick={() => {
-                if (!dirty || confirm("Rời khỏi bản nháp chưa lưu?"))
-                  navigate("/orders");
+                if (!dirty) navigate("/orders");
+                else
+                  setDecision({
+                    title: "Rời bản nháp?",
+                    description:
+                      "Các thay đổi chưa lưu sẽ được giữ tạm trên thiết bị này.",
+                    run: () => navigate("/orders"),
+                  });
               }}
             >
               <ArrowLeft size={16} />
@@ -449,17 +516,30 @@ export function OrderEditor() {
         }
       />
       {error && <Notice type="error">{error}</Notice>}
+      {recovered && (
+        <Notice type="info">
+          Đã phục hồi bản nháp chưa lưu trên thiết bị này.
+        </Notice>
+      )}
       <div className="order-toolbar">
         <Button
           onClick={() => {
-            if (!dirty || confirm("Tạo mới và bỏ thay đổi chưa lưu?")) {
+            const createNew = () => {
+              discardOrderDraft(draftKey);
               navigate("/orders/new");
               setCustomerId("");
               setLines([]);
               setNotes("");
               setDirty(false);
               setTab("customers");
-            }
+            };
+            if (!dirty) createNew();
+            else
+              setDecision({
+                title: "Tạo toa mới?",
+                description: "Bản nháp hiện tại sẽ bị xóa khỏi thiết bị.",
+                run: createNew,
+              });
           }}
         >
           <Plus size={16} />
@@ -523,6 +603,27 @@ export function OrderEditor() {
           <button
             key={key}
             role="tab"
+            id={`order-tab-${key}`}
+            aria-controls={`order-panel-${key}`}
+            tabIndex={tab === key ? 0 : -1}
+            onKeyDown={(event) => {
+              const keys = ["customers", "invoice", "detail"];
+              const current = keys.indexOf(key);
+              const index =
+                event.key === "ArrowRight"
+                  ? (current + 1) % 3
+                  : event.key === "ArrowLeft"
+                    ? (current + 2) % 3
+                    : event.key === "Home"
+                      ? 0
+                      : event.key === "End"
+                        ? 2
+                        : -1;
+              if (index < 0) return;
+              event.preventDefault();
+              setTab(keys[index]);
+              document.getElementById(`order-tab-${keys[index]}`)?.focus();
+            }}
             aria-selected={tab === key}
             className={tab === key ? "active" : ""}
             onClick={() => setTab(key)}
@@ -532,338 +633,442 @@ export function OrderEditor() {
           </button>
         ))}
       </div>
-      {tab === "customers" && (
-        <Card>
-          <div className="toolbar">
-            <SearchBox
-              value={q}
-              onChange={setQ}
-              placeholder="Tìm khách hàng ở đây…"
-            />
-            <div className="segmented">
-              <button
-                className={routeOnly ? "active" : ""}
-                onClick={() => setRouteOnly(true)}
-              >
-                Trong tuyến
-              </button>
-              <button
-                className={!routeOnly ? "active" : ""}
-                onClick={() => setRouteOnly(false)}
-              >
-                Tất cả
-              </button>
-            </div>
-            <Button onClick={() => navigate("/customers")}>
-              <Plus size={16} />
-              Tạo / sửa khách
-            </Button>
-          </div>
-          <div className="customer-picker">
-            {state.customers
-              .filter(
-                (c) =>
-                  !c.archived &&
-                  matches(q, c.name, c.phone, c.address) &&
-                  (!routeOnly || c.visitDays.includes(new Date().getDay())),
-              )
-              .map((c) => (
+      <div
+        role="tabpanel"
+        id={`order-panel-${tab}`}
+        aria-labelledby={`order-tab-${tab}`}
+      >
+        {tab === "customers" && (
+          <Card>
+            <div className="toolbar">
+              <SearchBox
+                value={q}
+                onChange={setQ}
+                placeholder="Tìm khách hàng ở đây…"
+              />
+              <div className="segmented">
                 <button
-                  className={`customer-option ${customerId === c.id ? "selected" : ""}`}
-                  key={c.id}
-                  disabled={locked}
-                  onClick={() => selectCustomer(c.id)}
+                  className={routeOnly ? "active" : ""}
+                  onClick={() => setRouteOnly(true)}
                 >
-                  <div className="avatar">{c.name.slice(0, 1)}</div>
-                  <div>
-                    <strong>{c.name}</strong>
-                    <span>{c.address || c.district || "Chưa có địa chỉ"}</span>
-                    <small>
-                      {c.phone || "Chưa có điện thoại"} ·{" "}
-                      {c.route || "Chưa có tuyến"}
-                    </small>
-                  </div>
-                  {customerId === c.id && <Check size={20} />}
+                  Trong tuyến
                 </button>
-              ))}
-          </div>
-          {!state.customers.length && (
-            <Empty
-              title="Chưa có khách hàng"
-              action={
-                <Button onClick={() => navigate("/customers")}>
-                  Tạo khách hàng
-                </Button>
-              }
-            />
-          )}
-        </Card>
-      )}
-      {tab === "invoice" && (
-        <>
-          <Card title="Thông tin toa">
-            <div className="form-grid three">
-              <Field label="Khách hàng">
-                <select
-                  disabled={locked}
-                  value={customerId}
-                  onChange={(e) => selectCustomer(e.target.value)}
+                <button
+                  className={!routeOnly ? "active" : ""}
+                  onClick={() => setRouteOnly(false)}
                 >
-                  <option value="">Chọn khách hàng</option>
-                  {state.customers
-                    .filter((c) => !c.archived)
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                </select>
-              </Field>
-              <Field label="Ngày đặt hàng">
-                <input
+                  Tất cả
+                </button>
+              </div>
+              <Button onClick={() => navigate("/customers")}>
+                <Plus size={16} />
+                Tạo / sửa khách
+              </Button>
+            </div>
+            <div className="customer-picker">
+              {state.customers
+                .filter(
+                  (c) =>
+                    !c.archived &&
+                    matches(q, c.name, c.phone, c.address) &&
+                    (!routeOnly || c.visitDays.includes(new Date().getDay())),
+                )
+                .map((c) => (
+                  <button
+                    className={`customer-option ${customerId === c.id ? "selected" : ""}`}
+                    key={c.id}
+                    disabled={locked}
+                    onClick={() => selectCustomer(c.id)}
+                  >
+                    <div className="avatar">{c.name.slice(0, 1)}</div>
+                    <div>
+                      <strong>{c.name}</strong>
+                      <span>
+                        {c.address || c.district || "Chưa có địa chỉ"}
+                      </span>
+                      <small>
+                        {c.phone || "Chưa có điện thoại"} ·{" "}
+                        {c.route || "Chưa có tuyến"}
+                      </small>
+                    </div>
+                    {customerId === c.id && <Check size={20} />}
+                  </button>
+                ))}
+            </div>
+            {!state.customers.length && (
+              <Empty
+                title="Chưa có khách hàng"
+                action={
+                  <Button onClick={() => navigate("/customers")}>
+                    Tạo khách hàng
+                  </Button>
+                }
+              />
+            )}
+          </Card>
+        )}
+        {tab === "invoice" && (
+          <>
+            <Card title="Thông tin toa">
+              <div className="form-grid three">
+                <Field label="Khách hàng">
+                  <select
+                    disabled={locked}
+                    value={customerId}
+                    onChange={(e) => selectCustomer(e.target.value)}
+                  >
+                    <option value="">Chọn khách hàng</option>
+                    {state.customers
+                      .filter((c) => !c.archived)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+                <Field label="Ngày đặt hàng">
+                  <input
+                    disabled={locked}
+                    type="date"
+                    value={date}
+                    onChange={(e) => {
+                      setDate(e.target.value);
+                      setDirty(true);
+                    }}
+                  />
+                </Field>
+                <Field label="Cách nhập giá">
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={casePrice}
+                      onChange={(e) => setCasePrice(e.target.checked)}
+                    />
+                    Giá theo thùng
+                  </label>
+                </Field>
+              </div>
+              <Field label="Ghi chú toa">
+                <textarea
                   disabled={locked}
-                  type="date"
-                  value={date}
+                  rows={2}
+                  value={notes}
                   onChange={(e) => {
-                    setDate(e.target.value);
+                    setNotes(e.target.value);
                     setDirty(true);
                   }}
+                  placeholder="Ghi chú giao hàng, yêu cầu của khách…"
                 />
               </Field>
-              <Field label="Cách nhập giá">
-                <label className="checkbox-field">
-                  <input
-                    type="checkbox"
-                    checked={casePrice}
-                    onChange={(e) => setCasePrice(e.target.checked)}
+            </Card>
+            <Card
+              title="Hàng bán & khuyến mãi"
+              subtitle="Quà tặng, trưng bày được tách khỏi doanh số bán."
+            >
+              {!locked && (
+                <div className="product-search">
+                  <SearchBox
+                    value={productQ}
+                    onChange={setProductQ}
+                    placeholder="Tìm sản phẩm để thêm vào toa…"
                   />
-                  Giá theo thùng
-                </label>
-              </Field>
-            </div>
-            <Field label="Ghi chú toa">
-              <textarea
-                disabled={locked}
-                rows={2}
-                value={notes}
-                onChange={(e) => {
-                  setNotes(e.target.value);
-                  setDirty(true);
-                }}
-                placeholder="Ghi chú giao hàng, yêu cầu của khách…"
-              />
-            </Field>
-          </Card>
-          <Card
-            title="Hàng bán & khuyến mãi"
-            subtitle="Quà tặng, trưng bày được tách khỏi doanh số bán."
-          >
-            {!locked && (
-              <div className="product-search">
-                <SearchBox
-                  value={productQ}
-                  onChange={setProductQ}
-                  placeholder="Tìm sản phẩm để thêm vào toa…"
-                />
-                {productQ && (
-                  <div className="product-results">
-                    {state.products
-                      .filter(
-                        (p) =>
-                          !p.archived &&
-                          matches(productQ, p.name, p.code, p.variant),
-                      )
-                      .slice(0, 12)
-                      .map((p) => (
-                        <button key={p.id} onClick={() => add(p.id)}>
-                          <span>
-                            <strong>{p.name}</strong>
-                            <small>
-                              {p.pack} {p.unit}/thùng · {p.variant}
-                            </small>
-                          </span>
-                          <span>
-                            {p.price === null ? "Chưa có giá" : money(p.price)}
-                            <Plus size={16} />
-                          </span>
-                        </button>
-                      ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {lines.length ? (
-              <div className="table-scroll">
-                <table className="line-table">
-                  <thead>
-                    <tr>
-                      <th>Sản phẩm / loại dòng</th>
-                      <th>Thùng</th>
-                      <th>Lẻ</th>
-                      <th className="numeric">
-                        {casePrice ? "Giá / thùng" : "Giá / đơn vị"}
-                      </th>
-                      <th>Giảm tiền</th>
-                      <th className="numeric">Thành tiền</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lines.map((l, i) => {
-                      const p = state.products.find(
-                        (p) => p.id === l.productId,
-                      );
-                      if (!p) return null;
-                      const lineTotal = new Decimal(l.price || 0)
-                        .times(l.quantity)
-                        .minus(l.discount || 0);
-                      return (
-                        <tr key={l.id}>
-                          <td>
-                            <strong>{p.name}</strong>
-                            <small>
-                              {number(l.quantity)} {p.unit} · {p.pack} {p.unit}
-                              /thùng
-                            </small>
-                            <div className="line-options">
-                              <select
-                                aria-label={`Loại dòng ${i + 1}`}
-                                value={l.kind}
-                                disabled={locked}
-                                onChange={(e) =>
-                                  changeLine(i, {
-                                    kind: e.target.value as DraftLine["kind"],
-                                  })
-                                }
-                              >
-                                <option value="sale">Hàng bán</option>
-                                <option value="gift">Quà tặng</option>
-                                <option value="display">Trưng bày</option>
-                              </select>
-                              {l.kind !== "sale" && (
+                  {productQ && (
+                    <div className="product-results">
+                      {state.products
+                        .filter(
+                          (p) =>
+                            !p.archived &&
+                            matches(productQ, p.name, p.code, p.variant),
+                        )
+                        .slice(0, 12)
+                        .map((p) => (
+                          <button key={p.id} onClick={() => add(p.id)}>
+                            <span>
+                              <strong>{p.name}</strong>
+                              <small>
+                                {p.pack} {p.unit}/thùng · {p.variant}
+                              </small>
+                            </span>
+                            <span>
+                              {p.price === null
+                                ? "Chưa có giá"
+                                : money(p.price)}
+                              <Plus size={16} />
+                            </span>
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {lines.length ? (
+                <div
+                  className="table-scroll"
+                  tabIndex={0}
+                  role="region"
+                  aria-label="Bảng dữ liệu có thể cuộn"
+                >
+                  <table className="line-table">
+                    <thead>
+                      <tr>
+                        <th>Sản phẩm / loại dòng</th>
+                        <th>Thùng</th>
+                        <th>Lẻ</th>
+                        <th className="numeric">
+                          {casePrice ? "Giá / thùng" : "Giá / đơn vị"}
+                        </th>
+                        <th>Giảm tiền</th>
+                        <th className="numeric">Thành tiền</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lines.map((l, i) => {
+                        const p = state.products.find(
+                          (p) => p.id === l.productId,
+                        );
+                        if (!p) return null;
+                        const lineTotal = new Decimal(l.price || 0)
+                          .times(l.quantity)
+                          .minus(l.discount || 0);
+                        return (
+                          <tr key={l.id}>
+                            <td>
+                              <strong>{p.name}</strong>
+                              <small>
+                                {number(l.quantity)} {p.unit} · {p.pack}{" "}
+                                {p.unit}
+                                /thùng
+                              </small>
+                              <div className="line-options">
                                 <select
-                                  aria-label={`Nguồn chi phí dòng ${i + 1}`}
-                                  value={l.sponsor}
+                                  aria-label={`Loại dòng ${i + 1}`}
+                                  value={l.kind}
                                   disabled={locked}
                                   onChange={(e) =>
                                     changeLine(i, {
-                                      sponsor: e.target
-                                        .value as DraftLine["sponsor"],
+                                      kind: e.target.value as DraftLine["kind"],
                                     })
                                   }
                                 >
-                                  <option value="employee">
-                                    Nhân viên chịu
-                                  </option>
-                                  <option value="company">Công ty chịu</option>
+                                  <option value="sale">Hàng bán</option>
+                                  <option value="gift">Quà tặng</option>
+                                  <option value="display">Trưng bày</option>
                                 </select>
-                              )}
-                            </div>
-                          </td>
-                          <td>
-                            <input
-                              aria-label={`Số thùng dòng ${i + 1}`}
-                              type="number"
-                              min="0"
-                              step="1"
-                              disabled={locked}
-                              value={Math.floor(l.quantity / p.pack)}
-                              onChange={(e) =>
-                                changeLine(i, {
-                                  quantity:
-                                    Number(e.target.value) * p.pack +
-                                    (l.quantity % p.pack),
-                                })
-                              }
-                            />
-                          </td>
-                          <td>
-                            <input
-                              aria-label={`Số lẻ dòng ${i + 1}`}
-                              type="number"
-                              min="0"
-                              step="1"
-                              disabled={locked}
-                              value={l.quantity % p.pack}
-                              onChange={(e) =>
-                                changeLine(i, {
-                                  quantity:
-                                    Math.floor(l.quantity / p.pack) * p.pack +
-                                    Number(e.target.value),
-                                })
-                              }
-                            />
-                          </td>
-                          <td>
-                            <input
-                              aria-label={`Giá dòng ${i + 1}`}
-                              type="number"
-                              min="0"
-                              step="any"
-                              disabled={locked || l.kind !== "sale"}
-                              value={
-                                casePrice
-                                  ? new Decimal(l.price || 0)
-                                      .times(p.pack)
-                                      .toString()
-                                  : l.price
-                              }
-                              onChange={(e) =>
-                                changeLine(i, {
-                                  price: casePrice
-                                    ? new Decimal(e.target.value || 0)
-                                        .div(p.pack)
-                                        .toString()
-                                    : e.target.value,
-                                })
-                              }
-                            />
-                            <label className="small-check">
+                                {l.kind !== "sale" && (
+                                  <select
+                                    aria-label={`Nguồn chi phí dòng ${i + 1}`}
+                                    value={l.sponsor}
+                                    disabled={locked}
+                                    onChange={(e) =>
+                                      changeLine(i, {
+                                        sponsor: e.target
+                                          .value as DraftLine["sponsor"],
+                                      })
+                                    }
+                                  >
+                                    <option value="employee">
+                                      Nhân viên chịu
+                                    </option>
+                                    <option value="company">
+                                      Công ty chịu
+                                    </option>
+                                  </select>
+                                )}
+                              </div>
+                            </td>
+                            <td>
                               <input
-                                type="checkbox"
+                                aria-label={`Số thùng dòng ${i + 1}`}
+                                type="number"
+                                min="0"
+                                step="1"
                                 disabled={locked}
-                                checked={l.fixedPrice}
+                                value={Math.floor(l.quantity / p.pack)}
                                 onChange={(e) =>
                                   changeLine(i, {
-                                    fixedPrice: e.target.checked,
+                                    quantity:
+                                      Number(e.target.value) * p.pack +
+                                      (l.quantity % p.pack),
                                   })
                                 }
                               />
-                              Cố định giá
-                            </label>
-                          </td>
+                            </td>
+                            <td>
+                              <input
+                                aria-label={`Số lẻ dòng ${i + 1}`}
+                                type="number"
+                                min="0"
+                                step="1"
+                                disabled={locked}
+                                value={l.quantity % p.pack}
+                                onChange={(e) =>
+                                  changeLine(i, {
+                                    quantity:
+                                      Math.floor(l.quantity / p.pack) * p.pack +
+                                      Number(e.target.value),
+                                  })
+                                }
+                              />
+                            </td>
+                            <td>
+                              <input
+                                aria-label={`Giá dòng ${i + 1}`}
+                                type="number"
+                                min="0"
+                                step="any"
+                                disabled={locked || l.kind !== "sale"}
+                                value={
+                                  casePrice
+                                    ? new Decimal(l.price || 0)
+                                        .times(p.pack)
+                                        .toString()
+                                    : l.price
+                                }
+                                onChange={(e) =>
+                                  changeLine(i, {
+                                    price: casePrice
+                                      ? new Decimal(e.target.value || 0)
+                                          .div(p.pack)
+                                          .toString()
+                                      : e.target.value,
+                                  })
+                                }
+                              />
+                              <label className="small-check">
+                                <input
+                                  type="checkbox"
+                                  disabled={locked}
+                                  checked={l.fixedPrice}
+                                  onChange={(e) =>
+                                    changeLine(i, {
+                                      fixedPrice: e.target.checked,
+                                    })
+                                  }
+                                />
+                                Cố định giá
+                              </label>
+                            </td>
+                            <td>
+                              <input
+                                aria-label={`Giảm tiền dòng ${i + 1}`}
+                                type="number"
+                                min="0"
+                                disabled={locked || l.kind !== "sale"}
+                                value={l.discount}
+                                onChange={(e) =>
+                                  changeLine(i, { discount: e.target.value })
+                                }
+                              />
+                            </td>
+                            <td className="numeric strong">
+                              {l.kind === "sale" ? (
+                                money(lineTotal.toString())
+                              ) : (
+                                <Badge tone="green">Không thu tiền</Badge>
+                              )}
+                            </td>
+                            <td>
+                              {!locked && (
+                                <button
+                                  aria-label={`Xóa dòng ${i + 1}`}
+                                  className="icon-button danger-text"
+                                  onClick={() => {
+                                    setLines(lines.filter((_, j) => i !== j));
+                                    setDirty(true);
+                                  }}
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <Empty
+                  title="Thêm mặt hàng đầu tiên"
+                  description="Tìm tên hoặc mã sản phẩm ở phía trên. Bạn có thể nhập theo thùng và đơn vị lẻ."
+                />
+              )}
+            </Card>
+          </>
+        )}
+        {tab === "detail" && (
+          <>
+            <Card
+              title="Đối chiếu quỹ dự kiến"
+              subtitle="Chưa cộng vào quỹ khả dụng cho đến khi thực giao."
+            >
+              <div
+                className="table-scroll"
+                tabIndex={0}
+                role="region"
+                aria-label="Bảng dữ liệu có thể cuộn"
+              >
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Sản phẩm</th>
+                      <th className="numeric">Số lượng</th>
+                      <th className="numeric">Giá bán</th>
+                      <th className="numeric">Giá gốc</th>
+                      <th className="numeric">Quỹ dòng</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((l) => {
+                      const p = state.products.find(
+                        (p) => p.id === l.productId,
+                      );
+                      const original = order?.lines.find((x) => x.id === l.id);
+                      const cost = locked ? original?.cost : p?.cost;
+                      const margin =
+                        cost == null
+                          ? null
+                          : l.kind === "sale"
+                            ? new Decimal(l.price)
+                                .minus(cost)
+                                .times(l.quantity)
+                                .minus(l.discount)
+                            : new Decimal(l.sponsor === "employee" ? cost : 0)
+                                .times(l.quantity)
+                                .neg();
+                      return (
+                        <tr key={l.id}>
                           <td>
-                            <input
-                              aria-label={`Giảm tiền dòng ${i + 1}`}
-                              type="number"
-                              min="0"
-                              disabled={locked || l.kind !== "sale"}
-                              value={l.discount}
-                              onChange={(e) =>
-                                changeLine(i, { discount: e.target.value })
-                              }
-                            />
+                            {p?.name || original?.name}
+                            <small>
+                              {l.kind === "gift"
+                                ? "Quà tặng"
+                                : l.kind === "display"
+                                  ? "Trưng bày"
+                                  : "Hàng bán"}
+                            </small>
                           </td>
-                          <td className="numeric strong">
-                            {l.kind === "sale" ? (
-                              money(lineTotal.toString())
+                          <td className="numeric">
+                            {number(l.quantity)} {p?.unit}
+                          </td>
+                          <td className="numeric">
+                            {l.kind === "sale" ? money(l.price) : "—"}
+                          </td>
+                          <td className="numeric">
+                            {cost == null ? (
+                              <Badge tone="amber">Thiếu giá</Badge>
                             ) : (
-                              <Badge tone="green">Không thu tiền</Badge>
+                              money(cost)
                             )}
                           </td>
-                          <td>
-                            {!locked && (
-                              <button
-                                aria-label={`Xóa dòng ${i + 1}`}
-                                className="icon-button danger-text"
-                                onClick={() => {
-                                  setLines(lines.filter((_, j) => i !== j));
-                                  setDirty(true);
-                                }}
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            )}
+                          <td
+                            className={`numeric ${margin?.isNegative() ? "negative" : "positive"}`}
+                          >
+                            {margin === null
+                              ? "Chờ đối chiếu"
+                              : money(margin.toString())}
                           </td>
                         </tr>
                       );
@@ -871,221 +1076,143 @@ export function OrderEditor() {
                   </tbody>
                 </table>
               </div>
-            ) : (
-              <Empty
-                title="Thêm mặt hàng đầu tiên"
-                description="Tìm tên hoặc mã sản phẩm ở phía trên. Bạn có thể nhập theo thùng và đơn vị lẻ."
-              />
-            )}
-          </Card>
-        </>
-      )}
-      {tab === "detail" && (
-        <>
-          <Card
-            title="Đối chiếu quỹ dự kiến"
-            subtitle="Chưa cộng vào quỹ khả dụng cho đến khi thực giao."
-          >
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Sản phẩm</th>
-                    <th className="numeric">Số lượng</th>
-                    <th className="numeric">Giá bán</th>
-                    <th className="numeric">Giá gốc</th>
-                    <th className="numeric">Quỹ dòng</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((l) => {
-                    const p = state.products.find((p) => p.id === l.productId);
-                    const original = order?.lines.find((x) => x.id === l.id);
-                    const cost = locked ? original?.cost : p?.cost;
-                    const margin =
-                      cost == null
-                        ? null
-                        : l.kind === "sale"
-                          ? new Decimal(l.price)
-                              .minus(cost)
-                              .times(l.quantity)
-                              .minus(l.discount)
-                          : new Decimal(l.sponsor === "employee" ? cost : 0)
-                              .times(l.quantity)
-                              .neg();
-                    return (
-                      <tr key={l.id}>
-                        <td>
-                          {p?.name || original?.name}
-                          <small>
-                            {l.kind === "gift"
-                              ? "Quà tặng"
-                              : l.kind === "display"
-                                ? "Trưng bày"
-                                : "Hàng bán"}
-                          </small>
-                        </td>
-                        <td className="numeric">
-                          {number(l.quantity)} {p?.unit}
-                        </td>
-                        <td className="numeric">
-                          {l.kind === "sale" ? money(l.price) : "—"}
-                        </td>
-                        <td className="numeric">
-                          {cost == null ? (
-                            <Badge tone="amber">Thiếu giá</Badge>
-                          ) : (
-                            money(cost)
-                          )}
-                        </td>
-                        <td
-                          className={`numeric ${margin?.isNegative() ? "negative" : "positive"}`}
-                        >
-                          {margin === null
-                            ? "Chờ đối chiếu"
-                            : money(margin.toString())}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-          {order && (
-            <Card title="Giao hàng, thu tiền & đổi trả">
-              <div className="toolbar">
-                {["confirmed", "partial"].includes(order.status) && (
-                  <Button
-                    variant="primary"
-                    onClick={() => setAction("delivery")}
-                  >
-                    <Truck size={16} />
-                    Ghi nhận thực giao
-                  </Button>
-                )}
-                <Button onClick={() => setAction("payment")}>
-                  Ghi nhận thu tiền
-                </Button>
-                {state.deliveries.some((d) => d.orderId === order.id) && (
-                  <Button onClick={() => setAction("return")}>
-                    <RotateCcw size={16} />
-                    Nhận hàng trả
-                  </Button>
-                )}
-              </div>
-              {state.deliveries
-                .filter((d) => d.orderId === order.id)
-                .map((d) => (
-                  <div className="delivery-row" key={d.id}>
-                    <div>
-                      <strong>{d.code}</strong>
-                      <small>
-                        {day(d.date)} ·{" "}
-                        {d.lines.reduce((s, l) => s + l.quantity, 0)} đơn vị
-                      </small>
-                    </div>
-                    <span>{money(d.total)}</span>
-                    <span className="positive">
-                      Quỹ{" "}
-                      {d.margin === null ? "cần đối chiếu" : money(d.margin)}
-                    </span>
-                  </div>
-                ))}
-              {!state.deliveries.some((d) => d.orderId === order.id) && (
-                <Empty
-                  title="Đơn chưa có lần giao"
-                  description="Chỉ ghi nhận hàng đã giao thực tế cho khách."
-                />
-              )}
-              {editingFinalized && deliveryEdits.length > 0 && (
-                <div className="form-stack">
-                  <Notice type="warning">
-                    Nhập lại đúng số thực giao của từng phiếu. Hệ thống sẽ từ
-                    chối nếu thấp hơn lượng đã trả hoặc cao hơn lượng đặt mới.
-                  </Notice>
-                  {deliveryEdits.map((delivery, deliveryIndex) => (
-                    <Card
-                      key={delivery.id}
-                      title={
-                        state.deliveries.find((item) => item.id === delivery.id)
-                          ?.code ?? "Phiếu giao"
-                      }
-                    >
-                      <div className="form-grid">
-                        {delivery.lines.map((part, partIndex) => (
-                          <Field
-                            key={part.lineId}
-                            label={
-                              lines.find((line) => line.id === part.lineId)
-                                ?.productId
-                                ? (state.products.find(
-                                    (product) =>
-                                      product.id ===
-                                      lines.find(
-                                        (line) => line.id === part.lineId,
-                                      )?.productId,
-                                  )?.name ?? "Dòng đã giao")
-                                : "Dòng đã giao"
-                            }
-                          >
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={part.quantity}
-                              onChange={(event) => {
-                                const quantity = Number(event.target.value);
-                                setDeliveryEdits((items) =>
-                                  items.map((item, i) =>
-                                    i === deliveryIndex
-                                      ? {
-                                          ...item,
-                                          lines: item.lines.map((line, j) =>
-                                            j === partIndex
-                                              ? { ...line, quantity }
-                                              : line,
-                                          ),
-                                        }
-                                      : item,
-                                  ),
-                                );
-                                setDirty(true);
-                              }}
-                            />
-                          </Field>
-                        ))}
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-              )}
-              <div className="detail-meta">
-                <div>
-                  <span>Đã thu</span>
-                  <strong>
-                    {money(
-                      state.payments
-                        .filter((p) => p.orderId === order.id)
-                        .reduce((s, p) => s + Number(p.amount), 0),
-                    )}
-                  </strong>
-                </div>
-                <div>
-                  <span>Thực giao</span>
-                  <strong>
-                    {money(
-                      state.deliveries
-                        .filter((d) => d.orderId === order.id)
-                        .reduce((s, d) => s + Number(d.total), 0),
-                    )}
-                  </strong>
-                </div>
-              </div>
             </Card>
-          )}
-        </>
-      )}
+            {order && (
+              <Card title="Giao hàng, thu tiền & đổi trả">
+                <div className="toolbar">
+                  {["confirmed", "partial"].includes(order.status) && (
+                    <Button
+                      variant="primary"
+                      onClick={() => setAction("delivery")}
+                    >
+                      <Truck size={16} />
+                      Ghi nhận thực giao
+                    </Button>
+                  )}
+                  <Button onClick={() => setAction("payment")}>
+                    Ghi nhận thu tiền
+                  </Button>
+                  {state.deliveries.some((d) => d.orderId === order.id) && (
+                    <Button onClick={() => setAction("return")}>
+                      <RotateCcw size={16} />
+                      Nhận hàng trả
+                    </Button>
+                  )}
+                </div>
+                {state.deliveries
+                  .filter((d) => d.orderId === order.id)
+                  .map((d) => (
+                    <div className="delivery-row" key={d.id}>
+                      <div>
+                        <strong>{d.code}</strong>
+                        <small>
+                          {day(d.date)} ·{" "}
+                          {d.lines.reduce((s, l) => s + l.quantity, 0)} đơn vị
+                        </small>
+                      </div>
+                      <span>{money(d.total)}</span>
+                      <span className="positive">
+                        Quỹ{" "}
+                        {d.margin === null ? "cần đối chiếu" : money(d.margin)}
+                      </span>
+                    </div>
+                  ))}
+                {!state.deliveries.some((d) => d.orderId === order.id) && (
+                  <Empty
+                    title="Đơn chưa có lần giao"
+                    description="Chỉ ghi nhận hàng đã giao thực tế cho khách."
+                  />
+                )}
+                {editingFinalized && deliveryEdits.length > 0 && (
+                  <div className="form-stack">
+                    <Notice type="warning">
+                      Nhập lại đúng số thực giao của từng phiếu. Hệ thống sẽ từ
+                      chối nếu thấp hơn lượng đã trả hoặc cao hơn lượng đặt mới.
+                    </Notice>
+                    {deliveryEdits.map((delivery, deliveryIndex) => (
+                      <Card
+                        key={delivery.id}
+                        title={
+                          state.deliveries.find(
+                            (item) => item.id === delivery.id,
+                          )?.code ?? "Phiếu giao"
+                        }
+                      >
+                        <div className="form-grid">
+                          {delivery.lines.map((part, partIndex) => (
+                            <Field
+                              key={part.lineId}
+                              label={
+                                lines.find((line) => line.id === part.lineId)
+                                  ?.productId
+                                  ? (state.products.find(
+                                      (product) =>
+                                        product.id ===
+                                        lines.find(
+                                          (line) => line.id === part.lineId,
+                                        )?.productId,
+                                    )?.name ?? "Dòng đã giao")
+                                  : "Dòng đã giao"
+                              }
+                            >
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={part.quantity}
+                                onChange={(event) => {
+                                  const quantity = Number(event.target.value);
+                                  setDeliveryEdits((items) =>
+                                    items.map((item, i) =>
+                                      i === deliveryIndex
+                                        ? {
+                                            ...item,
+                                            lines: item.lines.map((line, j) =>
+                                              j === partIndex
+                                                ? { ...line, quantity }
+                                                : line,
+                                            ),
+                                          }
+                                        : item,
+                                    ),
+                                  );
+                                  setDirty(true);
+                                }}
+                              />
+                            </Field>
+                          ))}
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+                <div className="detail-meta">
+                  <div>
+                    <span>Đã thu</span>
+                    <strong>
+                      {money(
+                        state.payments
+                          .filter((p) => p.orderId === order.id)
+                          .reduce((s, p) => s + Number(p.amount), 0),
+                      )}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Thực giao</span>
+                    <strong>
+                      {money(
+                        state.deliveries
+                          .filter((d) => d.orderId === order.id)
+                          .reduce((s, d) => s + Number(d.total), 0),
+                      )}
+                    </strong>
+                  </div>
+                </div>
+              </Card>
+            )}
+          </>
+        )}
+      </div>
       <div className="order-summary">
         <div>
           <span>Tiền hàng sau giảm</span>
@@ -1173,6 +1300,37 @@ export function OrderEditor() {
           action={action}
           order={order}
           onClose={() => setAction(null)}
+        />
+      )}
+      {textAction && (
+        <TextActionModal
+          title={
+            textAction.type === "revise"
+              ? "Sửa toa đã chốt"
+              : textAction.type === "cancel"
+                ? "Hủy phần chưa giao"
+                : "Xóa toa"
+          }
+          label="Lý do"
+          required
+          confirmLabel={textAction.type === "delete" ? "Xóa" : "Xác nhận"}
+          onClose={() => setTextAction(null)}
+          onConfirm={async (reason) => {
+            if (textAction.type === "revise")
+              await save(!!textAction.confirmAfter, reason);
+            else if (textAction.type === "cancel")
+              await cancelWithReason(reason);
+            else await removeOrderWithReason(reason);
+          }}
+        />
+      )}
+      {decision && (
+        <DecisionModal
+          title={decision.title}
+          description={decision.description}
+          confirmLabel="Tiếp tục"
+          onClose={() => setDecision(null)}
+          onConfirm={decision.run}
         />
       )}
     </>
@@ -1276,7 +1434,12 @@ function OrderAction({
             <input type="number" min="1" name="amount" required />
           </Field>
         ) : (
-          <div className="table-scroll">
+          <div
+            className="table-scroll"
+            tabIndex={0}
+            role="region"
+            aria-label="Bảng dữ liệu có thể cuộn"
+          >
             <table>
               <thead>
                 <tr>
@@ -1370,11 +1533,15 @@ function printOrder(order: Order, customer: string) {
           "'": "&#39;",
         })[c]!,
     );
-  const win = window.open("", "_blank");
-  if (!win) return;
-  win.document.write(
-    `<!doctype html><html lang="vi"><head><title>${escape(order.code)}</title><style>body{font:14px Arial;padding:32px;color:#152b3c}table{width:100%;border-collapse:collapse}th,td{padding:12px;border-bottom:1px solid #ddd;text-align:left}h1{font-size:24px}.total{text-align:right;font-size:18px}</style></head><body><h1>TrueCare · ${escape(order.code)}</h1><p>Khách hàng: ${escape(customer)} · Ngày ${day(order.date)}</p><table><thead><tr><th>Sản phẩm</th><th>Số lượng</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead><tbody>${order.lines.map((l) => `<tr><td>${escape(l.name)}${l.kind === "sale" ? "" : " (tặng)"}</td><td>${l.quantity} ${escape(l.unit)}</td><td>${l.kind === "sale" ? money(l.price) : "—"}</td><td>${l.kind === "sale" ? money(new Decimal(l.price).times(l.quantity).minus(l.discount).toString()) : "Tặng"}</td></tr>`).join("")}</tbody></table><p class="total"><b>Tổng cộng: ${money(order.total)}</b></p><p>${escape(order.notes)}</p></body></html>`,
+  const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>${escape(order.code)}</title><link rel="stylesheet" href="${escape(new URL("/print-order.css", location.origin).href)}"/><script defer src="${escape(new URL("/print-order.js", location.origin).href)}"></script></head><body><header><img src="${escape(new URL("/truecare-logo.png", location.origin).href)}" alt="TrueCare" width="72" height="72"/><div><h1>TrueCare · ${escape(order.code)}</h1><p>Khách hàng: ${escape(customer)} · Ngày ${day(order.date)}</p></div></header><table><thead><tr><th>Sản phẩm</th><th>Số lượng</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead><tbody>${order.lines.map((l) => `<tr><td>${escape(l.name)}${l.kind === "sale" ? "" : " (tặng)"}</td><td>${l.quantity} ${escape(l.unit)}</td><td>${l.kind === "sale" ? money(l.price) : "—"}</td><td>${l.kind === "sale" ? money(new Decimal(l.price).times(l.quantity).minus(l.discount).toString()) : "Tặng"}</td></tr>`).join("")}</tbody></table><p class="total"><b>Tổng cộng: ${money(order.total)}</b></p><p>${escape(order.notes)}</p></body></html>`;
+  const url = URL.createObjectURL(
+    new Blob([html], { type: "text/html;charset=utf-8" }),
   );
-  win.document.close();
-  win.print();
+  const win = window.open(url, "_blank");
+  if (!win) {
+    URL.revokeObjectURL(url);
+    return;
+  }
+  // Keep the document available while the new window loads its assets.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

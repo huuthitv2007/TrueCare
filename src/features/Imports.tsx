@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileSpreadsheet, Upload, Check, AlertTriangle } from "lucide-react";
+import { FileSpreadsheet, Upload, Check, AlertTriangle } from '../icons';
 import { useWorkspace, request } from "../api";
 import {
   Button,
@@ -193,7 +193,7 @@ export function Imports() {
                 </ul>
               </div>
             )}
-            <div className="table-wrap">
+            <div className="table-wrap" tabIndex={0} role="region" aria-label="Bảng dữ liệu có thể cuộn">
               <table>
                 <thead>
                   <tr>

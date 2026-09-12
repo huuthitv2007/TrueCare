@@ -7,13 +7,15 @@ import {
   MapPin,
   Download,
   RefreshCw,
-} from "lucide-react";
+  Trash2,
+} from '../icons';
 import type { Customer, Product } from "../../shared/types";
-import { useWorkspace } from "../api";
+import { trashOne, useWorkspace } from "../api";
 import {
   Badge,
   Button,
   Card,
+  ConfirmActionModal,
   day,
   download,
   Empty,
@@ -26,14 +28,15 @@ import {
   number,
   Pager,
   SearchBox,
+  TextActionModal,
   today,
 } from "../ui";
-import { defaultCatalogs } from "../../shared/catalogs";
+import { activeCatalogs, defaultCatalogs } from "../../shared/catalogs";
 const visitLabels = ["Chủ Nhật", ...defaultCatalogs.visitDays];
 export function Customers() {
-  const { state, command, notify, busy, user, adminTarget } = useWorkspace();
+  const { state, command, notify, busy, user, adminTarget, refresh } = useWorkspace();
   const navigate = useNavigate();
-  const catalogs = state.catalogs ?? defaultCatalogs;
+  const catalogs = activeCatalogs(state.catalogs ?? defaultCatalogs, state.catalogEntries);
   const [params, setParams] = useSearchParams();
   const query = params.get("q") || "";
   const route = params.get("route") || "";
@@ -43,11 +46,12 @@ export function Customers() {
   const [editing, setEditing] = useState<Partial<Customer> | null>(null);
   const [detail, setDetail] = useState<Customer | null>(null);
   const [page, setPage] = useState(1);
-  const [showArchived, setShowArchived] = useState(false);
+  const [deleting, setDeleting] = useState<Customer | null>(null);
+  const [recordingVisit, setRecordingVisit] = useState<Customer | null>(null);
   const [err, setErr] = useState("");
   const rows = state.customers.filter(
     (c) =>
-      (showArchived || !c.archived) &&
+      !c.deletedAt && !c.mergedInto && !c.archived &&
       matches(query, c.name, c.contact, c.phone, c.address, c.district) &&
       (!route || c.route === route) &&
       (!district || c.district === district) &&
@@ -77,7 +81,7 @@ export function Customers() {
           ...editing,
           ...Object.fromEntries(f),
           visitDays: f.getAll("visitDays").map(Number),
-          archived: user.role === "admin" ? f.get("archived") === "on" : false,
+          archived: false,
         },
       });
       setEditing(null);
@@ -178,15 +182,10 @@ export function Customers() {
             <Download size={16} />
             Xuất
           </Button>
-          {user.role === "admin" && (
-            <Button onClick={() => setShowArchived((value) => !value)}>
-              {showArchived ? "Ẩn khách lưu trữ" : "Xem khách lưu trữ"}
-            </Button>
-          )}
         </div>
         {rows.length ? (
           <>
-            <div className="table-scroll">
+            <div className="table-scroll" tabIndex={0} role="region" aria-label="Bảng dữ liệu có thể cuộn">
               <table>
                 <thead>
                   <tr>
@@ -209,7 +208,6 @@ export function Customers() {
                           {c.name}
                         </button>
                         <small>{c.address || "Chưa có địa chỉ"}</small>
-                        {c.archived && <Badge tone="red">Đã lưu trữ</Badge>}
                       </td>
                       <td>
                         {c.contact || "—"}
@@ -340,16 +338,6 @@ export function Customers() {
             <Field label="Ghi chú">
               <textarea name="notes" defaultValue={editing.notes} />
             </Field>
-            {user.role === "admin" && (
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  name="archived"
-                  defaultChecked={editing.archived}
-                />
-                Lưu trữ khách hàng
-              </label>
-            )}
             <div className="modal-actions">
               <Button type="button" onClick={() => setEditing(null)}>
                 Hủy
@@ -391,21 +379,7 @@ export function Customers() {
               Tạo đơn cho khách
             </Button>
             <Button
-              onClick={async () => {
-                const notes = prompt("Ghi chú lần ghé khách:");
-                if (notes !== null) {
-                  try {
-                    await command("recordVisit", {
-                      customerId: detail.id,
-                      date: today(),
-                      notes,
-                    });
-                    notify("Đã ghi nhận viếng thăm.");
-                  } catch (e) {
-                    notify((e as Error).message);
-                  }
-                }
-              }}
+              onClick={() => setRecordingVisit(detail)}
             >
               Ghi nhận viếng thăm
             </Button>
@@ -422,25 +396,14 @@ export function Customers() {
             {user.role === "admin" && (
               <Button
                 variant="danger"
-                onClick={async () => {
-                  if (
-                    confirm(
-                      "Lưu trữ khách hàng? Các giao dịch cũ được giữ lại.",
-                    )
-                  ) {
-                    await command("saveCustomer", {
-                      customer: { ...detail, archived: true },
-                    });
-                    setDetail(null);
-                  }
-                }}
+                onClick={() => setDeleting(detail)}
               >
-                Lưu trữ
+                <Trash2 size={15} /> Xóa
               </Button>
             )}
           </div>
           <h3>Lịch sử đơn hàng</h3>
-          <div className="table-scroll">
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Bảng dữ liệu có thể cuộn">
             <table>
               <thead>
                 <tr>
@@ -487,19 +450,38 @@ export function Customers() {
             ))}
         </Modal>
       )}
+      {deleting && (
+        <ConfirmActionModal
+          title="Xóa khách hàng"
+          subject={deleting.name}
+          description="Khách hàng sẽ được chuyển vào Thùng rác. Toa và lịch sử ghé cũ được giữ nguyên."
+          onClose={() => setDeleting(null)}
+          onConfirm={async (reason, requestId) => {
+            await trashOne('customers', deleting.id, reason, requestId);
+            setDetail(null);
+            await refresh();
+            notify("Đã chuyển khách hàng vào Thùng rác.");
+          }}
+        />
+      )}
+      {recordingVisit && <TextActionModal title="Ghi nhận viếng thăm" label="Ghi chú lần ghé khách" onClose={() => setRecordingVisit(null)} onConfirm={async (notes) => {
+        await command("recordVisit", { customerId: recordingVisit.id, date: today(), notes });
+        notify("Đã ghi nhận viếng thăm.");
+      }}/>}
     </>
   );
 }
 export function Products() {
-  const { state, command, notify, busy, user } = useWorkspace();
+  const { state, command, notify, busy, user, refresh } = useWorkspace();
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState<Partial<Product> | null>(null);
+  const [deleting, setDeleting] = useState<Product | null>(null);
   const [err, setErr] = useState("");
   const rows = state.products.filter(
     (p) =>
-      (showArchived || !p.archived) &&
+      !p.deletedAt && (showArchived || !p.archived) &&
       matches(q, p.name, p.code, p.variant) &&
       (!group || p.group === group),
   );
@@ -572,7 +554,7 @@ export function Products() {
           )}
         </div>
         {rows.length ? (
-          <div className="table-scroll">
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Bảng dữ liệu có thể cuộn">
             <table>
               <thead>
                 <tr>
@@ -631,15 +613,10 @@ export function Products() {
                         : money(Number(p.price) - Number(p.cost))}
                     </td>
                     <td>
-                      {user.role === "admin" && (
-                        <button
-                          className="icon-button"
-                          aria-label={`Sửa ${p.name}`}
-                          onClick={() => setEditing(p)}
-                        >
-                          <Pencil size={16} />
-                        </button>
-                      )}
+                      {user.role === "admin" && <div className="heading-actions">
+                        <button className="icon-button" aria-label={`Sửa ${p.name}`} onClick={() => setEditing(p)}><Pencil size={16} /></button>
+                        <button className="icon-button danger" aria-label={`Xóa ${p.name}`} onClick={() => setDeleting(p)}><Trash2 size={16} /></button>
+                      </div>}
                     </td>
                   </tr>
                 ))}
@@ -724,6 +701,19 @@ export function Products() {
           </form>
         </Modal>
       )}
+      {deleting && (
+        <ConfirmActionModal
+          title="Xóa sản phẩm"
+          subject={`${deleting.code} · ${deleting.name}`}
+          description="Sản phẩm sẽ được chuyển vào Thùng rác và không còn xuất hiện khi lập toa mới. Lịch sử giá và toa cũ được giữ nguyên."
+          onClose={() => setDeleting(null)}
+          onConfirm={async (reason, requestId) => {
+            await trashOne('products', deleting.id, reason, requestId);
+            await refresh();
+            notify("Đã chuyển sản phẩm vào Thùng rác.");
+          }}
+        />
+      )}
     </>
   );
 }
@@ -804,7 +794,7 @@ export function Inventory() {
           </select>
         </div>
         {rows.length ? (
-          <div className="table-scroll">
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Bảng dữ liệu có thể cuộn">
             <table>
               <thead>
                 <tr>
@@ -872,7 +862,7 @@ export function Inventory() {
         )}
       </Card>
       <Card title="Lịch sử biến động gần đây">
-        <div className="table-scroll">
+        <div className="table-scroll" tabIndex={0} role="region" aria-label="Bảng dữ liệu có thể cuộn">
           <table>
             <thead>
               <tr>
