@@ -134,11 +134,12 @@ summary:focus-visible {
   position: relative;
 }
 .brand-link {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  width: fit-content;
   min-width: 0;
+  margin-inline: auto;
 }
 .sidebar-brand {
   width: 64px;
@@ -363,15 +364,16 @@ summary:focus-visible {
   justify-content: space-between;
 }
 .mobile-drawer .brand-link {
-  width: auto;
+  margin-inline: 0;
 }
 .mobile-drawer .sidebar-brand {
   width: 48px;
   height: 48px;
 }
 .mobile-logo {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  width: fit-content;
 }
 .mobile-logo .mobile-brand {
   width: 42px;
@@ -1513,6 +1515,8 @@ td small {
 .auth-brand {
   display: flex;
   justify-content: center;
+  width: fit-content;
+  margin-inline: auto;
   margin-bottom: 28px;
 }
 .auth-brand .truecare-logo {
