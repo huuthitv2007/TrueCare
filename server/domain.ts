@@ -348,6 +348,10 @@ export function execute(
   command: Command,
   actor?: Actor,
 ): AppState {
+  if (["deleteCatalogEntry", "reverseFundEntry", "clearInventory", "archiveProgram", "restoreProgramVisibility"].includes(command.type)) {
+    assert(actor?.role === "admin", "Chỉ quản trị viên được thực hiện thao tác này", "FORBIDDEN");
+    assert(String(command.payload?.reason ?? "").trim().length >= 3, "Cần lý do từ 3 ký tự");
+  }
   if (
     actor?.role === "employee" &&
     [
@@ -372,7 +376,7 @@ export function execute(
       403,
     );
   const s = structuredClone(state);
-  const p = command.payload ?? {};
+  const p = structuredClone(command.payload ?? {});
   refresh(s);
   const ref = p.id ?? p.orderId ?? p.order?.id;
   if (!["restoreOrder", "purgeOrder"].includes(command.type) && ref)
@@ -611,6 +615,7 @@ export function execute(
       audit(s, command.type, customer.id, reason);
       break;
     }
+    case "deleteCatalogEntry":
     case "saveCatalog": {
       assert(
         actor?.role === "admin",
@@ -618,6 +623,12 @@ export function execute(
         "FORBIDDEN",
       );
       const current = s.catalogs ?? structuredClone(defaultCatalogs);
+      if (command.type === "deleteCatalogEntry") {
+        const kind = String(p.kind) as keyof typeof current;
+        assert(Object.hasOwn(current, kind) && kind !== "visitDays", "Danh mục cố định không được xóa", "CONFLICT");
+        assert(current[kind].includes(p.value), "Mục danh mục không còn tồn tại", "CONFLICT");
+        p[kind] = current[kind].filter(value => value !== p.value);
+      }
       const next = { ...current };
       for (const key of [
         "districts",
@@ -958,7 +969,16 @@ export function execute(
       });
       break;
     }
+    case "clearInventory":
     case "adjustInventory": {
+      if (command.type === "clearInventory") {
+        const inventory = s.inventory.find((item) => item.productId === p.productId);
+        assert(inventory, "Không tìm thấy tồn kho", "NOT_FOUND");
+        assert(inventory.quantity !== 0, "Tồn kho đã bằng 0", "CONFLICT");
+        p.mode = "set";
+        p.quantity = 0;
+        p.tracked = inventory.tracked;
+      }
       found(s.products, p.productId);
       assert(Number.isSafeInteger(p.quantity), "Tồn kho phải là số nguyên");
       assert(String(p.reason ?? "").trim(), "Cần lý do điều chỉnh tồn");
@@ -993,6 +1013,16 @@ export function execute(
         reason: p.reason,
         referenceId: "",
       });
+      break;
+    }
+    case "reverseFundEntry": {
+      const entry = found(s.ledger, p.id);
+      assert(["opening", "adjustment"].includes(entry.type) && !entry.referenceId && !entry.reversalOf,
+        "Khoản này phải xử lý tại chứng từ gốc", "REFERENCED");
+      assert(!s.ledger.some((item) => item.reversalOf === entry.id), "Khoản quỹ đã được bù trừ", "CONFLICT");
+      assert(!D(entry.amount).isZero(), "Khoản quỹ đã bằng 0", "CONFLICT");
+      s.ledger.push({ id: id(), date: date(), type: "adjustment", amount: money(D(entry.amount).neg()),
+        referenceId: entry.id, reversalOf: entry.id, notes: `Bù trừ ${entry.id}: ${String(p.reason).trim()}` });
       break;
     }
     case "openingBalance":
@@ -1097,6 +1127,23 @@ export function execute(
         expiresAt: validDate(p.expiresAt ?? date()),
         seed: Number(p.seed ?? 1),
       });
+      break;
+    }
+    case "archiveProgram": {
+      const prog = found(s.programs, p.id);
+      assert(!prog.archivedAt, "Chương trình đã được lưu trữ", "CONFLICT");
+      if (prog.status === "active") { prog.status = "cancelled"; prog.reserved = "0"; }
+      prog.archivedAt = new Date().toISOString();
+      prog.archivedBy = actor!.id;
+      prog.archiveReason = String(p.reason).trim();
+      break;
+    }
+    case "restoreProgramVisibility": {
+      const prog = found(s.programs, p.id);
+      assert(prog.archivedAt, "Chương trình đang hiển thị", "CONFLICT");
+      delete prog.archivedAt;
+      delete prog.archivedBy;
+      delete prog.archiveReason;
       break;
     }
     case "cancelProgram": {

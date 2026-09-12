@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { previewPrograms, DomainError, assert } from "./domain.js";
+import { previewPrograms, DomainError, assert, reservedStock } from "./domain.js";
 import { createSupabaseAdapter } from "./supabase-adapter.js";
 import {
   accountUser,
@@ -410,7 +410,7 @@ async function executeAdminCommand(
 }
 
 type BulkAction = "trash" | "restore" | "purge";
-type BulkResource = "customers" | "orders" | "products" | "users";
+type BulkResource = "customers" | "orders" | "products" | "users" | "inventory" | "funds" | "programs" | "imports" | "audit";
 type BulkResult = {
   id: string;
   ownerId?: string;
@@ -764,6 +764,7 @@ app.post(
       "Cần khóa chống gửi lặp",
     );
     const sensitive = new Set([
+      "deleteCatalogEntry", "reverseFundEntry", "clearInventory", "archiveProgram", "restoreProgramVisibility",
       "saveProduct",
       "adjustInventory",
       "saveCatalog",
@@ -1178,6 +1179,15 @@ app.get(
   }),
 );
 
+app.delete("/api/admin/catalogs/:kind/entries", route(async (req, res) => {
+  const session = res.locals.session as Session;
+  const reason = reasonOf(req.body.reason);
+  const kind = String(req.params.kind), value = String(req.body.value ?? "");
+  const next = await executeAdminCommand(session.user.id, session.user, "deleteCatalogEntry", { kind, value, reason }, req.header("x-idempotency-key"));
+  await logAdmin(session.user.id, null, "delete_catalog_entry", reason, {kind,value}, {objectType:"catalog",objectId:kind});
+  res.json({ values: (next.catalogs as any)?.[kind] });
+}));
+
 app.post(
   "/api/admin/catalogs/:kind/rename",
   route(async (req, res) => {
@@ -1208,7 +1218,7 @@ app.get(
     const q = String(req.query.q ?? "").toLocaleLowerCase("vi");
     const products = state?.products ?? [];
     const balances = (state?.inventory ?? [])
-      .map((balance) => ({ ...balance, product: products.find((x) => x.id === balance.productId) }))
+      .map((balance) => ({ ...balance, reserved: states.reduce((sum, owned) => sum + reservedStock(owned.state, balance.productId), 0), product: products.find((x) => x.id === balance.productId) }))
       .filter((x) => !q || [x.product?.code, x.product?.name].join(" ").toLocaleLowerCase("vi").includes(q));
     const movements = await admin
       .from("inventory_movements")
@@ -1249,7 +1259,12 @@ app.get(
     const ownerId = String(req.query.ownerId ?? "");
     const rows = states
       .filter((x) => !ownerId || x.ownerId === ownerId)
-      .flatMap((owned) => owned.state.ledger.map((entry) => ({ ...entry, ownerId: owned.ownerId, ownerName: owned.ownerName })))
+      .flatMap((owned) => owned.state.ledger.map((entry) => ({ ...entry, ownerId: owned.ownerId, ownerName: owned.ownerName,
+        reversed: owned.state.ledger.some(item => item.reversalOf === entry.id),
+        orderId: owned.state.deliveries.find(item => item.id === entry.referenceId)?.orderId
+          ?? owned.state.returns.find(item => item.id === entry.referenceId)?.orderId
+          ?? owned.state.orders.find(item => item.id === entry.referenceId)?.id,
+      })))
       .filter(entry=>filter.matches(entry.date,entry.ownerId,entry.notes,entry.type,entry.ownerName))
       .sort((a, b) => b.date.localeCompare(a.date));
     res.json(pageOf(rows, pageQuery(req).page, pageQuery(req).pageSize));
@@ -1262,8 +1277,10 @@ app.get(
     const filter = readListFilter(req.query);
     const states = await ownedStates();
     const status = String(req.query.status ?? "all");
+    const archive = String(req.query.archive ?? "visible");
     const rows = states
       .flatMap((owned) => owned.state.programs.map((program) => ({ ...program, ownerId: owned.ownerId, ownerName: owned.ownerName })))
+      .filter(program => archive === "all" || Boolean(program.archivedAt) === (archive === "archived"))
       .filter((program) => status === "all" || program.status === status)
       .filter(program=>filter.matches(program.expiresAt,program.ownerId,program.name,program.ownerName))
       .sort((a, b) => b.expiresAt.localeCompare(a.expiresAt));
@@ -1276,10 +1293,11 @@ app.get(
   route(async (req, res) => {
     const filter = readListFilter(req.query);
     let query = admin
-      .from("admin_import_jobs")
-      .select("id,owner_id,actor_id,filename,kind,status,summary,error_message,created_at,updated_at", { count: "exact" })
+      .from("admin_import_list")
+      .select("id,owner_id,actor_id,filename,kind,status,summary,error_message,created_at,updated_at,archived_at", { count: "exact" })
       .order("created_at", { ascending: false })
       .range((pageQuery(req).page - 1) * pageQuery(req).pageSize, pageQuery(req).page * pageQuery(req).pageSize - 1);
+    if(req.query.archive !== 'all')query=req.query.archive === 'archived' ? query.not('archived_at','is',null) : query.is('archived_at',null);
     if(filter.from)query=query.gte('created_at',`${filter.from}T00:00:00+07:00`);
     if(filter.to)query=query.lte('created_at',`${filter.to}T23:59:59.999999+07:00`);
     if(req.query.q)query=query.ilike('filename',`%${String(req.query.q).replace(/[%_]/g,'')}%`);
@@ -1548,15 +1566,17 @@ app.post(
     const reason = reasonOf(req.body.reason);
     const key = String(req.body.idempotencyKey ?? req.header("x-idempotency-key") ?? "");
     const rawItems = req.body.items;
-    assert(["customers", "orders", "products", "users"].includes(resource), "Loại dữ liệu không hỗ trợ");
+    assert(["customers", "orders", "products", "users", "inventory", "funds", "programs", "imports", "audit"].includes(resource), "Loại dữ liệu không hỗ trợ");
     assert(["trash", "restore", "purge"].includes(action), "Thao tác không hỗ trợ");
+    assert(!["inventory", "funds"].includes(resource) || action === "trash", "Kho và quỹ chỉ hỗ trợ điều chỉnh có lịch sử");
+    assert(!["programs", "imports", "audit"].includes(resource) || action !== "purge", "Lịch sử không được xóa vĩnh viễn");
     assert(typeof key === "string" && key.length >= 8 && key.length <= 200, "Cần khóa chống gửi lặp");
     assert(Array.isArray(rawItems) && rawItems.length >= 1 && rawItems.length <= 25, "Mỗi lần chọn từ 1 đến 25 dòng");
     const items = rawItems.map((item: any) => ({
       id: String(item?.id ?? item),
       ownerId: item?.ownerId == null ? undefined : String(item.ownerId),
     }));
-    assert(items.every((item) => item.id && (resource !== "orders" || item.ownerId)), "Dữ liệu lựa chọn không hợp lệ");
+    assert(items.every((item) => item.id && (!["orders", "funds", "programs"].includes(resource) || item.ownerId)), "Dữ liệu lựa chọn không hợp lệ");
     assert(new Set(items.map((item) => `${item.ownerId ?? ""}:${item.id}`)).size === items.length, "Danh sách có dòng trùng");
     const fingerprint = createHash("sha256")
       .update(JSON.stringify({ actor: session.user.id, resource, action, items, reason }))
@@ -1615,6 +1635,23 @@ app.post(
           before = current.orders.find((order) => order.id === item.id);
           const next = await executeAdminCommand(item.ownerId!, session.user, type, { id: item.id, reason }, `${key}:${index}`);
           after = next.orders.find((order) => order.id === item.id);
+        } else if (["inventory", "funds", "programs"].includes(resource)) {
+          const ownerId = resource === "inventory" ? session.user.id : item.ownerId!;
+          const current = await store.getStateForOwner(ownerId);
+          before = resource === "inventory" ? current.inventory.find(row => row.productId === item.id)
+            : resource === "funds" ? current.ledger.find(row => row.id === item.id) : current.programs.find(row => row.id === item.id);
+          const type = resource === "inventory" ? "clearInventory" : resource === "funds" ? "reverseFundEntry"
+            : action === "trash" ? "archiveProgram" : "restoreProgramVisibility";
+          const next = await executeAdminCommand(ownerId, session.user, type,
+            { id: item.id, productId: item.id, reason }, `${key}:${index}`);
+          after = resource === "inventory" ? next.inventory.find(row => row.productId === item.id)
+            : resource === "funds" ? next.ledger.find(row => row.reversalOf === item.id) : next.programs.find(row => row.id === item.id);
+        } else if (["imports", "audit"].includes(resource)) {
+          const response = await admin.rpc("set_admin_list_archive", { p_resource: resource, p_id: item.id,
+            p_archived: action === "trash", p_actor: session.user.id, p_reason: reason, p_key: `${key}:${index}` });
+          if (response.error) throw new DomainError("CONFLICT", response.error.message.includes("ALREADY") ? "Bản ghi đã được xử lý" : "Không thể thay đổi trạng thái lưu trữ", 409);
+          results.push({ ...item, status: "success", message: action === "trash" ? "Đã lưu trữ cho tất cả admin" : "Đã khôi phục hiển thị" });
+          continue;
         } else {
           const target = await accountOf(item.id);
           before = employeeAccount(target);
@@ -1630,7 +1667,7 @@ app.post(
           before,
           after,
         });
-        results.push({ ...item, status: "success", message: action === "trash" ? "Đã chuyển vào thùng rác" : action === "restore" ? "Đã khôi phục" : "Đã xoá vĩnh viễn" });
+        results.push({ ...item, status: "success", message: resource === "inventory" ? "Đã điều chỉnh tồn về 0" : resource === "funds" ? "Đã tạo bút toán bù trừ" : resource === "programs" ? action === "trash" ? "Đã lưu trữ chương trình" : "Đã khôi phục hiển thị" : action === "trash" ? "Đã chuyển vào thùng rác" : action === "restore" ? "Đã khôi phục" : "Đã xoá vĩnh viễn" });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Không thực hiện được";
         await logAdmin(session.user.id, null, `${action}_${resource}_blocked`, reason, { message, ownerId: item.ownerId }, {
@@ -1701,10 +1738,11 @@ app.get(
     const { page, pageSize } = pageQuery(req);
     const filter=readListFilter(req.query);
     let query = admin
-      .from("admin_audit_logs")
-      .select("id,actor_id,target_user_id,action,reason,details,request_id,object_type,object_id,before_data,after_data,created_at", { count: "exact" })
+      .from("admin_audit_list")
+      .select("id,actor_id,target_user_id,action,reason,details,request_id,object_type,object_id,before_data,after_data,created_at,archived_at", { count: "exact" })
       .order("created_at", { ascending: false })
       .range((page - 1) * pageSize, page * pageSize - 1);
+    if(req.query.archive !== 'all')query=req.query.archive === 'archived' ? query.not('archived_at','is',null) : query.is('archived_at',null);
     if (req.query.action) query = query.eq("action", String(req.query.action));
     if (req.query.actorId) query = query.eq("actor_id", String(req.query.actorId));
     if (req.query.targetId) query = query.eq("target_user_id", String(req.query.targetId));

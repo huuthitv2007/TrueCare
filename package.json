@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
+    "@electric-sql/pglite": "0.5.8",
     "@playwright/test": "latest",
     "@tailwindcss/vite": "4.3.3",
     "@types/express": "latest",

@@ -1772,3 +1772,26 @@ td small {
   outline-offset: 3px;
   border-radius: 4px;
 }
+
+/* Keep destructive actions in view while each table scrolls independently. */
+.table-scroll .admin-action-column {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  width: 140px;
+  min-width: 140px;
+  max-width: 140px;
+  background: var(--background);
+  box-shadow: -1px 0 var(--border);
+  white-space: normal;
+}
+.table-scroll th.admin-action-column { background: var(--muted); z-index: 2; }
+.admin-row-actions, .admin-secondary-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.admin-row-actions .btn { white-space: normal; min-height: 44px; }
+.action-blocked { display: block; overflow-wrap: anywhere; color: var(--muted-foreground); }
+.admin-secondary-actions .btn { justify-content: flex-start; min-height: 44px; }
+.bulk-bar { margin: 12px 0; }
+@media (max-width: 767px) {
+  .table-scroll .admin-action-column { width: 108px; min-width: 108px; max-width: 108px; padding: 8px; }
+  .table-scroll .admin-action-column .btn { padding: 8px; }
+}

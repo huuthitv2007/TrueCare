@@ -180,6 +180,7 @@ export interface LedgerEntry {
   amount: Money;
   referenceId: string;
   notes: string;
+  reversalOf?: string;
 }
 export interface Inventory {
   productId: string;
@@ -211,6 +212,9 @@ export interface Program {
   status: "active" | "cancelled" | "expired";
   expiresAt: string;
   seed: number;
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
 }
 export interface Settings {
   displayName: string;

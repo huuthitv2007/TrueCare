@@ -183,6 +183,7 @@ test("theme changes in an inspected workspace never write another account prefer
 }) => {
   const fixture = await mockWorkspace(page);
   await page.goto("/admin/employees");
+  await page.getByRole("button", { name: "Khác", exact: true }).click();
   await page.getByRole("button", { name: "Mở dữ liệu", exact: true }).click();
   await expect(
     page.getByRole("region", { name: "Không gian đang quản trị" }),

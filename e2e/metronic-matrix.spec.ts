@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { mockWorkspace } from "./metronic-fixture";
+import { mockAdminLists } from "./admin-list-fixture";
 
 const employeeRoutes = [
   "/",
@@ -44,7 +44,7 @@ for (const width of [360, 390, 768, 1023, 1024, 1440, 1920])
           localStorage.setItem("truecare-theme:qa", value);
           localStorage.setItem("truecare-theme", value);
         }, theme);
-        const fixture = await mockWorkspace(page);
+        const fixture = await mockAdminLists(page);
         const errors: string[] = [];
         page.on("pageerror", (error) => {
           errors.push(error.message);
@@ -92,12 +92,12 @@ for (const width of [360, 390, 768, 1023, 1024, 1440, 1920])
           if (
             testInfo.project.name === "desktop" &&
             [390, 1440].includes(width) &&
-            ["/", "/customers", "/admin/catalogs", "/orders/new"].includes(
+            ["/admin/customers", "/admin/inventory", "/admin/funds", "/admin/imports", "/admin/audit"].includes(
               route,
             )
           ) {
             await page.screenshot({
-              path: `docs/design/metronic/${route === "/" ? "dashboard" : route.slice(1).replaceAll("/", "-")}-${width}-${theme}.png`,
+              path: `docs/design/admin-delete/${route === "/" ? "dashboard" : route.slice(1).replaceAll("/", "-")}-${width}-${theme}.png`,
               fullPage: true,
             });
           }

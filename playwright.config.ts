@@ -44,6 +44,11 @@ export default defineConfig({
       name: "firefox",
       use: {
         ...devices["Desktop Firefox"],
+        launchOptions: {
+          // Keep headed Windows test windows rendering when another window
+          // covers them; otherwise Firefox suspends actionability animation frames.
+          firefoxUserPrefs: { "widget.windows.window_occlusion_tracking.enabled": false },
+        },
         viewport: { width: 1440, height: 1000 },
       },
     },

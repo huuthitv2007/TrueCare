@@ -177,7 +177,8 @@ export function createSupabaseAdapter(url: string, serviceKey: string) {
         "Kho công ty đã thay đổi. Vui lòng tải lại.",
         "CONFLICT",
       );
-      const committed = await admin.rpc("commit_workspace_v2", {
+      const committed = await admin.rpc(command.type === "clearInventory" ? "commit_inventory_clear" : "commit_workspace_v2", {
+        ...(command.type === "clearInventory" ? { p_product: command.payload.productId } : {}),
         p_owner: owner,
         p_expected: command.version,
         p_key: command.idempotencyKey,
@@ -199,7 +200,7 @@ export function createSupabaseAdapter(url: string, serviceKey: string) {
             ? "CONFLICT"
             : "STORAGE",
           committed.error.message.includes("CONFLICT")
-            ? "Dữ liệu, danh mục hoặc kho đã thay đổi. Vui lòng tải lại."
+            ? committed.error.message.includes("RESERVED") ? "Kho còn hàng đang giữ cho toa hoặc chương trình của nhân viên" : "Dữ liệu, danh mục hoặc kho đã thay đổi. Vui lòng tải lại."
             : "Chưa lưu được thao tác",
           committed.error.message.includes("CONFLICT") ? 409 : 503,
         );
