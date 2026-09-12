@@ -26,9 +26,11 @@ Các bảng quản trị ghim cột **Thao tác** bên phải, hiển thị nút
 - Typecheck và build đạt.
 - 52 kiểm thử nghiệp vụ/SQL đạt, gồm áp dụng toàn bộ 13 migration trên PostgreSQL riêng, quyền service role/nhân viên, nhật ký bất biến, rollback nếu ghi audit lỗi, bù trừ chính xác và xung đột phiên bản.
 - Playwright: lượt đầy đủ đạt 101/102 ca trong 21,7 phút; ca Firefox còn lại quá thời gian khi đóng context và đạt khi chạy lại riêng (13 giây). Tổng cộng 102 ca có kết quả đạt. Ma trận đạt 25 route × bảy chiều rộng × hai theme × ba engine = 1.050 lượt trang; gồm breakpoint 1023/1024px, không tràn ngang toàn trang hoặc lỗi tài nguyên. Có kiểm tra axe và focus bàn phím.
-- Bản production chạy cục bộ đã qua health, tải bundle/font/logo, CSP nonce và chặn API admin khi chưa đăng nhập. Tài khoản nhân viên kiểm thử bị từ chối ở cả năm nhóm API mới; state nghiệp vụ trước/sau bằng nhau.
+- Render production `https://truecare-employee.onrender.com` đã chạy commit `7b39e09a772a9e806b691fc134d8a8719d8f5806` qua deploy `dep-daiksdmk1f9s738kgla0`. Health trả 200, HTML tải bundle mới `/assets/index-Csa7R7KC.js`, `/assets/index-C0vuaUuq.css` và Admin chunk `/assets/Admin-CbCDtlux.js`; logo giữ SHA256 bên dưới.
+- Tài nguyên production đã kiểm tra 200 đúng MIME: Inter CSS/woff2, KeenIcons CSS/font, theme init và print assets. Không phát sinh lỗi console hoặc 404 trong ma trận nghiệm thu cuối.
+- Tài khoản nhân viên kiểm thử bị từ chối ở cả năm nhóm API admin mới; truy cập ẩn danh bị chặn khỏi admin API; state nghiệp vụ trước/sau bằng nhau.
 - Không tạo hoặc sửa giao dịch nghiệp vụ production để thử chức năng Xóa. Kiểm thử thay đổi dữ liệu dùng fixture, PostgreSQL riêng và bộ API nghiệp vụ với dữ liệu QA riêng.
-- Luồng admin có quyền được kiểm tra bằng fixture và PostgreSQL riêng; chưa có phiên admin production còn hiệu lực để nghiệm thu các trang admin trực tiếp trên website.
+- Luồng admin production được nghiệm thu chỉ đọc: các danh sách hiển thị cột **Thao tác**, nút **Xóa**, menu **Khác**, bộ lọc lưu trữ và phân trang; modal Xóa mở, focus vào lý do và đóng bằng Escape/Hủy. Không xác nhận xóa, bù trừ, điều chỉnh kho hoặc lưu trữ dữ liệu production.
 
 ## Ảnh giao diện
 
@@ -37,6 +39,12 @@ Các bảng quản trị ghim cột **Thao tác** bên phải, hiển thị nút
 - [Khách hàng desktop](admin-customers-1440-light.png), [khách hàng mobile](admin-customers-390-light.png).
 - [Kho mobile](admin-inventory-390-light.png), [quỹ mobile dark](admin-funds-390-dark.png).
 - [Lịch sử nhập](admin-imports-1440-light.png), [nhật ký dark](admin-audit-1440-dark.png).
+
+Ảnh nghiệm thu production đã che dữ liệu nằm trong `production-verification/screenshots`:
+
+- [Sản phẩm mobile light](production-verification/screenshots/products-390-light.png), [sản phẩm mobile dark](production-verification/screenshots/products-390-dark.png).
+- [Sản phẩm desktop light](production-verification/screenshots/products-1440-light.png), [sản phẩm desktop dark](production-verification/screenshots/products-1440-dark.png).
+- [Modal Xóa mobile](production-verification/screenshots/delete-modal-390.png), [modal Xóa desktop](production-verification/screenshots/delete-modal-1440.png).
 
 ## Phát hành và khôi phục
 
@@ -48,4 +56,4 @@ Bản build frontend bàn giao: `.local/TrueCare-admin-delete-build-20260912.zip
 
 Website: https://truecare-employee.onrender.com. Migration phải có trước bản ứng dụng mới. Nếu ứng dụng lỗi, dùng Render rollback phiên bản ứng dụng; giữ migration bổ sung và dữ liệu mới, không chạy migration đảo ngược hoặc phục hồi đè database. Khôi phục source cục bộ bằng checkout riêng từ commit trong `base-commit.txt`, không reset công việc đang có.
 
-Website vẫn phục vụ bundle cũ ở lần kiểm tra trước push. Chưa có Deploy Hook hoặc Render API key trong phiên này; việc đưa bản mới lên website và nghiệm thu admin production chưa hoàn tất. Sau khi source lên `main`, kích hoạt **Deploy latest commit** tại dịch vụ Render `srv-dah9v7u1egvs73d75us0`, rồi xác minh bundle mới, health, đăng nhập và các danh sách admin.
+Render đã được triển khai thủ công bằng **Manual Deploy → Deploy latest commit** tại service `srv-dah9v7u1egvs73d75us0`. Điểm khôi phục ứng dụng trước deploy là commit `0cbf0b6`; nếu cần rollback, dùng Render rollback về deploy trước và giữ nguyên database/migration 013. Dashboard trong lúc kiểm tra hiển thị cảnh báo quyền truy cập Git repository trước khi clone, nhưng deploy thủ công vẫn clone/build thành công; chưa thay đổi cấu hình CI/CD.
