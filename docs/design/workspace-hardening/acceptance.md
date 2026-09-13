@@ -42,6 +42,8 @@ Kết quả trước khi phát hành:
 
 Kiểm thử ghi dữ liệu chỉ chạy trên SQLite cô lập, fixture trình duyệt và PostgreSQL/PGlite cô lập. Production chỉ đăng nhập, đọc dữ liệu, mở/hủy modal và kiểm tra tài nguyên.
 
+Nghiệm thu production cho bản ứng dụng `d3ca5e9b3d0a` đạt 265/265 kiểm tra, 0 lỗi trên Chromium, Firefox và WebKit. Đã xác nhận health/database, API admin mới, bundle, font/KeenIcons, logo gốc, cache asset có hash, phản hồi 404, quyền truy cập ẩn danh, light/dark, các route chính và viewport 360–1920px. Modal tạo lịch được mở rồi đóng bằng Escape. Bộ kiểm tra chặn mọi request ghi; số thao tác nghiệp vụ ghi lên production là 0. Ảnh đã che vùng tài khoản/lịch và JSON kết quả nằm ngoài Git tại `C:\Users\ZGAMESVN\Downloads\TrueCare-backups\hardening-handoff\production`.
+
 Các ca hồi quy bao gồm giao dịch chốt thất bại/khóa gửi lặp; tranh kho giữa hai workspace; hết hạn theo giờ Việt Nam; điểm danh tương lai/trạng thái sai/ngày cũ/duyệt cạnh tranh; liên kết lịch–lượt chăm sóc và điều chỉnh; tham chiếu sau gộp/xóa; proof khôi phục dùng một lần; quyền employee A/B/admin với backend thật.
 
 Luồng khôi phục được kiểm tra bằng SDK Supabase đã khóa phiên bản với transport kiểm thử, SQL proof thực và màn hình trình duyệt. Không gửi email hoặc đổi mật khẩu tài khoản production. Chưa xác nhận việc chuyển email thực tế tới hộp thư qua cấu hình SMTP của production; đây là phần phụ thuộc dịch vụ cần kiểm tra bằng tài khoản/môi trường email kiểm thử riêng. Liên kết phải mở trong trình duyệt đã gửi yêu cầu trong vòng 15 phút. Hướng dẫn nền: [Supabase password recovery](https://supabase.com/docs/guides/auth/passwords#resetting-a-password).
@@ -50,6 +52,7 @@ Luồng khôi phục được kiểm tra bằng SDK Supabase đã khóa phiên b
 
 - Bản trước: `f110b37cb94b7362b533906d955ed46bb167d2eb`.
 - Render deploy hoạt động trước thay đổi: `dep-daj7q70ae00c738tqghg`, service `srv-dah9v7u1egvs73d75us0`.
+- Render deploy bản ứng dụng đã nghiệm thu: `dep-daja1gjm8hqs73ffmbb0`.
 - Sao lưu source và Git bundle ngoài repo: `C:\Users\ZGAMESVN\Downloads\TrueCare-backups\pre-hardening-20260913-190329`.
 - Snapshot database ngay trước migration: `database-1789304953501.json` trong cùng thư mục, không đưa vào Git vì có dữ liệu nội bộ. Migration 014 đã áp dụng thành công; migration 013 khớp source, hai view được tạo và dấu vân tay của cả 19 bảng cũ không đổi trong transaction. SHA-256 migration: `f5d456f2d10aa1d7098582730e949735b25196a4dae95454f8d9ea54fa33ea88`.
 - Nếu bản ứng dụng lỗi nghiêm trọng: chọn deploy hoạt động trước đó trên Render và rollback; giữ migration bổ sung và dữ liệu mới. Sửa lỗi bằng commit tiếp theo. Không tự chạy migration đảo ngược hoặc phục hồi đè dữ liệu mới. [Render deploys](https://render.com/docs/deploys)
