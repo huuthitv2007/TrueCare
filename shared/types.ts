@@ -60,6 +60,7 @@ export interface Customer {
   district: string;
   province: string;
   route: string;
+  routeId?: string;
   visitDays: number[];
   frequency: string;
   storeType: string;
@@ -112,6 +113,7 @@ export interface OrderDeletion {
   reserved: Money;
 }
 export interface Order {
+  creationCommandKey?: string;
   id: string;
   code: string;
   customerId: string;
@@ -205,6 +207,46 @@ export interface AttendanceRecord {
   updatedAt: string;
   changedBy?: string;
   reason?: string;
+  version?: number;
+  needsReview?: boolean;
+}
+export interface AttendanceHistory {
+  id: string;
+  date: string;
+  at: string;
+  actorId?: string;
+  reason: string;
+  before?: AttendanceRecord;
+  after: AttendanceRecord;
+}
+export interface AttendanceRequest {
+  id: string;
+  date: string;
+  requestedStatus: AttendanceStatus;
+  reason: string;
+  status: "pending" | "approved" | "rejected" | "withdrawn";
+  requestedBy: string;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+  before?: AttendanceRecord;
+  reviewedBy?: string;
+  reviewReason?: string;
+}
+export interface CareVisit {
+  id: string;
+  customerId: string;
+  date: string;
+  notes: string;
+  scheduleId?: string;
+  voidedAt?: string;
+  voidedBy?: string;
+  voidReason?: string;
+}
+export interface RouteScheduleResult {
+  completedCustomerIds: string[];
+  resultNotes: string;
+  performedDate: string;
 }
 export interface RouteSchedule {
   id: string;
@@ -212,12 +254,24 @@ export interface RouteSchedule {
   startTime: string;
   endTime: string;
   route: string;
+  routeId?: string;
+  version?: number;
   notes: string;
   customerIds: string[];
   status: "planned" | "completed" | "cancelled";
   resultNotes?: string;
   completedCustomerIds?: string[];
   completedAt?: string;
+  performedDate?: string;
+  needsReview?: boolean;
+  resultHistory?: {
+    id: string;
+    at: string;
+    actorId?: string;
+    reason: string;
+    before: RouteScheduleResult;
+    after: RouteScheduleResult;
+  }[];
   deletedAt?: string;
   deletedBy?: string;
   deleteReason?: string;
@@ -282,8 +336,10 @@ export interface AppState {
   routeSchedules?: RouteSchedule[];
   inventory: Inventory[];
   inventoryMovements: InventoryMovement[];
-  visits: { id: string; customerId: string; date: string; notes: string }[];
+  visits: CareVisit[];
   attendance?: AttendanceRecord[];
+  attendanceRequests?: AttendanceRequest[];
+  attendanceHistory?: AttendanceHistory[];
   settings: Settings;
   audit: {
     id: string;

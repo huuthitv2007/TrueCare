@@ -4,6 +4,7 @@ import { CalendarDays, Check, Plus, Icon, RotateCcw } from "../icons";
 import { useWorkspace } from "../api";
 import { OrderTable } from "./Orders";
 import { attendanceForDate, dailyReport } from "../lib/reporting";
+import { AttendancePanel } from "./AttendancePanel";
 import {
   Badge,
   Button,
@@ -475,226 +476,12 @@ export function Fund() {
     </>
   );
 }
-export function Programs() {
-  const { state, command, busy, notify } = useWorkspace();
-  const navigate = useNavigate();
-  const [lines, setLines] = useState<
-    { productId: string; quantity: number; price: string }[]
-  >([]);
-  const [name, setName] = useState("Suất chào hàng");
-  const [count, setCount] = useState(1);
-  const [allow, setAllow] = useState(false);
-  const [expires, setExpires] = useState(today());
-  const productStatus = (p: (typeof state.products)[number]) =>
-    p.deletedAt
-      ? "Đang ở thùng rác"
-      : p.archived
-        ? "Ngừng kinh doanh"
-        : p.cost === null && p.price === null
-          ? "Thiếu giá vốn và giá chào"
-          : p.cost === null
-            ? "Thiếu giá vốn"
-            : p.price === null
-              ? "Thiếu giá chào"
-              : "";
-  const eligibleProducts = state.products.filter((p) => !productStatus(p));
-  const blockedProducts = state.products.filter((p) => productStatus(p));
-  const add = (id: string) => {
-    const p = eligibleProducts.find((x) => x.id === id);
-    if (!p) return notify("Sản phẩm chưa đủ giá vốn/giá chào để tạo chương trình.");
-    if (lines.some((line) => line.productId === id)) return notify("Sản phẩm đã có trong chương trình.");
-    setLines([...lines, { productId: id, quantity: 1, price: p.price || "0" }]);
-  };
-  const save = async () => {
-    try {
-      await command("reserveProgram", {
-        name,
-        count,
-        allowSubsidy: allow,
-        expiresAt: expires,
-        mode: "bundle",
-        lines,
-      });
-      setLines([]);
-      notify("Đã giữ ngân sách cho chương trình.");
-    } catch (e) {
-      notify((e as Error).message);
-    }
-  };
-  return (
-    <>
-      <Heading
-        title="Chương trình & random suất"
-        description="Mỗi suất kiểm tra giá chào từng hàng và tối đa 200.000đ quỹ cũ. Xem trước không giữ quỹ."
-      />
-      <div className="program-grid">
-        <Card title="Tạo suất chào">
-          <div className="form-stack">
-            <Field label="Tên chương trình">
-              <input value={name} onChange={(e) => setName(e.target.value)} />
-            </Field>
-            <div className="form-grid">
-              <Field label="Số suất">
-                <input
-                  type="number"
-                  min="1"
-                  value={count}
-                  onChange={(e) => setCount(Number(e.target.value))}
-                />
-              </Field>
-              <Field label="Hết hạn">
-                <input
-                  type="date"
-                  value={expires}
-                  onChange={(e) => setExpires(e.target.value)}
-                />
-              </Field>
-            </div>
-            <Field
-              label="Thêm sản phẩm"
-              hint="Chỉ sản phẩm đang kinh doanh và đủ giá vốn/giá chào mới được chọn."
-            >
-              <select
-                value=""
-                onChange={(e) => e.target.value && add(e.target.value)}
-              >
-                <option value="">Chọn sản phẩm đủ điều kiện</option>
-                {eligibleProducts.length > 0 && (
-                  <optgroup label="Có thể dùng">
-                    {eligibleProducts.map((p) => (
-                      <option value={p.id} key={p.id}>
-                        {p.code ? `${p.code} · ` : ""}{p.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {blockedProducts.length > 0 && (
-                  <optgroup label="Chưa đủ điều kiện">
-                    {blockedProducts.slice(0, 80).map((p) => (
-                      <option value={p.id} key={p.id} disabled>
-                        {p.code ? `${p.code} · ` : ""}{p.name} — {productStatus(p)}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            </Field>
-            {!eligibleProducts.length && (
-              <Notice type="warning">
-                Chưa có sản phẩm đủ điều kiện để tạo chương trình. Cần cập nhật giá vốn và giá chào trong trang Sản phẩm & bảng giá.
-              </Notice>
-            )}
-            {blockedProducts.length > 0 && (
-              <Notice>
-                {blockedProducts.length} sản phẩm đang bị ẩn khỏi danh sách chọn vì thiếu giá hoặc không còn kinh doanh.
-                <Button type="button" onClick={() => navigate("/products")}>
-                  Cập nhật bảng giá
-                </Button>
-              </Notice>
-            )}
-            {lines.map((l, i) => (
-              <div className="program-line" key={i}>
-                <span data-testid="program-selected-product">
-                  {state.products.find((p) => p.id === l.productId)?.name}
-                </span>
-                <input
-                  type="number"
-                  min="1"
-                  value={l.quantity}
-                  onChange={(e) =>
-                    setLines(
-                      lines.map((x, n) =>
-                        n === i
-                          ? { ...x, quantity: Number(e.target.value) }
-                          : x,
-                      ),
-                    )
-                  }
-                />
-                <input
-                  type="number"
-                  min="0"
-                  value={l.price}
-                  onChange={(e) =>
-                    setLines(
-                      lines.map((x, n) =>
-                        n === i ? { ...x, price: e.target.value } : x,
-                      ),
-                    )
-                  }
-                />
-                <button
-                  onClick={() => setLines(lines.filter((_, n) => n !== i))}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={allow}
-                onChange={(e) => setAllow(e.target.checked)}
-              />
-              Cho phép dùng quỹ đã giao nếu cần bù
-            </label>
-            <Notice>
-              Hệ thống chặn nếu một suất cần bù quá 200.000đ hoặc tổng số suất
-              vượt quỹ khả dụng.
-            </Notice>
-            <Button
-              variant="primary"
-              busy={busy}
-              disabled={!lines.length}
-              onClick={() => void save()}
-            >
-              Lưu & giữ ngân sách
-            </Button>
-          </div>
-        </Card>
-        <Card title="Chương trình đã lưu">
-          {state.programs.length ? (
-            <div className="program-list">
-              {state.programs.map((p) => (
-                <div key={p.id}>
-                  <div>
-                    <strong>{p.name}</strong>
-                    <small>
-                      {p.remaining}/{p.count} suất · hết hạn {day(p.expiresAt)}
-                    </small>
-                  </div>
-                  <span>
-                    <Status value={p.status} />
-                    <b>Giữ {money(p.reserved)}</b>
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <Empty
-              title="Chưa có chương trình"
-              description="Tạo suất sau khi cập nhật bảng giá, giá vốn và quỹ."
-            />
-          )}
-        </Card>
-      </div>
-    </>
-  );
-}
+export { Programs } from "./Programs";
 export function DailyReport() {
   const { state, command, busy, notify } = useWorkspace();
   const [date, setDate] = useState(today());
   const [mode, setMode] = useState<"ordered" | "delivered">("ordered");
-  const attendance = attendanceForDate(state, date);
   const text = dailyReport(state, date, mode);
-  const setAttendance = async (status: "worked" | "cancelled" | "leave", reason: string) => {
-    try {
-      await command("setAttendance", { date, status, reason });
-      notify(status === "worked" ? "Đã điểm danh ngày làm việc." : "Đã ghi nhận ngày không làm việc.");
-    } catch (error) {
-      notify((error as Error).message);
-    }
-  };
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -747,37 +534,14 @@ export function DailyReport() {
           <Button onClick={() => void copy()}>
             Sao chép báo cáo
           </Button>
-          <Button onClick={reset}>
+          <Button onClick={reset} title="Chỉ đặt lại ngày và chế độ xem; không xóa số liệu">
             <RotateCcw size={16} />
             Đặt lại báo cáo
           </Button>
         </div>
-        <Notice type={attendance?.status === "worked" ? "success" : "warning"}>
-          {attendance?.status === "worked"
-            ? `Ngày ${day(date)} đã được tính vào Thời gian đã bán.`
-            : attendance?.status === "leave"
-              ? `Ngày ${day(date)} đã ghi nhận nghỉ phép, không cộng Thời gian đã bán.`
-              : attendance?.status === "cancelled"
-                ? `Ngày ${day(date)} đã hủy điểm danh, không cộng Thời gian đã bán.`
-                : `Ngày ${day(date)} chưa điểm danh, chưa cộng Thời gian đã bán.`}
-        </Notice>
-        <div className="toolbar">
-          <Button
-            variant="primary"
-            busy={busy}
-            onClick={() => void setAttendance("worked", "Điểm danh từ báo cáo cuối ngày")}
-          >
-            <Check size={16} />
-            Điểm danh ngày này
-          </Button>
-          <Button
-            busy={busy}
-            onClick={() => void setAttendance("leave", "Nghỉ phép hoặc không bán hàng")}
-          >
-            Nghỉ phép / không bán
-          </Button>
-        </div>
-        <pre className="report-output">{text}</pre>
+        <AttendancePanel date={date} />
+        <Notice>Thời gian đã bán là ngày làm thực tế; tổng ngày là kế hoạch. Đặt lại chỉ đổi bộ lọc.</Notice>
+        <textarea className="report-output" aria-label="Nội dung báo cáo để sao chép" readOnly value={text} rows={17} onFocus={e => e.currentTarget.select()} />
       </Card>
     </>
   );

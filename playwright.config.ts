@@ -9,7 +9,7 @@ export default defineConfig({
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:5273",
-    headless: false,
+    headless: Boolean(process.env.CI),
     actionTimeout: 10_000,
     navigationTimeout: 20_000,
     trace: "retain-on-failure",
@@ -19,6 +19,7 @@ export default defineConfig({
     command: "npm run dev",
     env: {
       TRUECARE_DATA_DIR: ".local/metronic-qa-data",
+      TRUECARE_E2E_BOOTSTRAP_SECRET: "truecare-local-e2e-only",
       PORT: "5311",
       TRUECARE_API_PORT: "5311",
       TRUECARE_WEB_PORT: "5273",

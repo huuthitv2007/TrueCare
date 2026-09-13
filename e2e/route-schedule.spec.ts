@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { mockWorkspace } from "./metronic-fixture";
 
 test("employee creates and completes a route schedule", async ({ page }) => {
-  const fixture = await mockWorkspace(page);
+  const fixture = await mockWorkspace(page, { role: "employee" });
   await page.goto("/route-schedule");
   await page.getByRole("button", { name: /Tạo lịch/ }).first().click();
   const dialog = page.getByRole("dialog", { name: /Tạo lịch theo tuyến/ });
@@ -17,6 +17,15 @@ test("employee creates and completes a route schedule", async ({ page }) => {
   await complete.getByRole("button", { name: "Lưu kết quả" }).click();
   await expect(page.getByText("Đã chăm sóc xong")).toBeVisible();
   expect(fixture.getState().visits.some((visit) => visit.notes === "Đã chăm sóc xong")).toBe(true);
+  await page.getByRole("button", { name: "Điều chỉnh kết quả", exact: true }).click();
+  const adjust = page.getByRole("dialog", { name: "Điều chỉnh kết quả", exact: true });
+  await adjust.getByRole("checkbox").first().uncheck();
+  await adjust.getByLabel("Lý do", { exact: true }).fill("Đối chiếu lại khách chưa thực hiện");
+  await adjust.getByLabel("Ghi chú kết quả").fill("Đã điều chỉnh kết quả chăm sóc");
+  await adjust.getByRole("button", { name: "Lưu kết quả", exact: true }).click();
+  await expect(adjust).toHaveCount(0);
+  expect(fixture.getState().visits.filter(visit => !visit.voidedAt)).toHaveLength(0);
+  expect(fixture.commands.at(-1).type).toBe("adjustRouteSchedule");
 });
 
 

@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { emptyState, execute } from "../server/domain";
 import type { AppState } from "../shared/types";
+import { businessDate as today } from "../shared/business-date";
 
 export function sampleState() {
   let state = emptyState("Nguyễn Minh Anh");
@@ -10,8 +11,9 @@ export function sampleState() {
       payload,
       version: state.version,
       idempotencyKey: crypto.randomUUID(),
-    });
+    }, { id: "qa", role: "admin" });
   };
+  run("saveCatalog", { routes: ["Tuyến 1"] });
   run("saveProduct", {
     name: "Nước giặt TrueCare hương hoa",
     code: "TC-001",
@@ -29,7 +31,7 @@ export function sampleState() {
   });
   run("saveOrder", {
     customerId: state.customers[0].id,
-    date: new Date().toISOString().slice(0, 10),
+    date: today(),
     lines: [{ productId: state.products[0].id, quantity: 12, price: "120000" }],
   });
   run("confirmOrder", { id: state.orders[0].id });
@@ -37,9 +39,9 @@ export function sampleState() {
     orderId: state.orders[0].id,
     lines: [{ lineId: state.orders[0].lines[0].id, quantity: 4 }],
   });
-  run("setAttendance", { date: new Date().toISOString().slice(0, 10), status: "worked", reason: "E2E fixture" });
+  run("setAttendance", { date: today(), status: "worked", reason: "E2E fixture" });
   run("saveRouteSchedule", {
-    date: new Date().toISOString().slice(0, 10),
+    date: today(),
     startTime: "08:00",
     endTime: "10:00",
     route: "Tuyến 1",
@@ -85,13 +87,14 @@ export async function mockWorkspace(
       p = url.pathname;
     if (p === "/api/auth/session") return route.fulfill({ json: { user } });
     if (p === "/api/state") return route.fulfill({ json: state });
+    if (p.startsWith("/api/admin/") && role !== "admin") return route.fulfill({ status: 403, json: { error: { code: "FORBIDDEN", message: "Chỉ quản trị viên được thực hiện" } } });
     if (p === "/api/admin/workspaces/qa")
       return route.fulfill({ json: { state } });
     if (p === "/api/commands") {
       try {
         const command = req.postDataJSON();
         commands.push(command);
-        state = execute(state, command);
+        state = execute(state, command, { id: user.id, role: user.role });
         return route.fulfill({ json: state });
       } catch (error) {
         return route.fulfill({

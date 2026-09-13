@@ -52,7 +52,8 @@ export function AppShell({
   );
   const [themeBusy, setThemeBusy] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
-  const todayDate = today();
+  const [todayDate, setTodayDate] = useState(today);
+  const [dismissedDay, setDismissedDay] = useState("");
   const attendance = (state.attendance ?? []).find((item) => item.date === todayDate);
   const [attendancePrompt, setAttendancePrompt] = useState(false);
   useEffect(() => {
@@ -72,6 +73,8 @@ export function AppShell({
   }, [theme, user.id]);
   useEffect(() => {
     const check = () => {
+      const currentDate = today();
+      setTodayDate(currentDate);
       const hour = Number(
         new Intl.DateTimeFormat("en-GB", {
           timeZone: "Asia/Ho_Chi_Minh",
@@ -79,12 +82,14 @@ export function AppShell({
           hour12: false,
         }).format(new Date()),
       );
-      setAttendancePrompt(hour >= 7 && !attendance && !adminTarget);
+      setAttendancePrompt(hour >= 7 && !state.attendance?.some(item => item.date === currentDate) && !adminTarget && dismissedDay !== currentDate);
     };
     check();
     const timer = window.setInterval(check, 60_000);
-    return () => window.clearInterval(timer);
-  }, [adminTarget, attendance?.status, todayDate, user.id]);
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", check); document.removeEventListener("visibilitychange", check); };
+  }, [adminTarget, state.attendance, dismissedDay, user.id]);
   const markAttendance = async (status: "worked" | "cancelled") => {
     try {
       await command("setAttendance", {
@@ -329,7 +334,7 @@ export function AppShell({
           </footer>
         </div>
         {attendancePrompt && (
-          <Modal title="Điểm danh hôm nay" onClose={() => setAttendancePrompt(false)}>
+          <Modal title="Điểm danh hôm nay" onClose={() => { setDismissedDay(today()); setAttendancePrompt(false); }}>
             <div className="form-stack">
               <Notice>
                 Bấm Điểm danh nếu hôm nay bạn làm việc. Hệ thống chỉ cộng Thời gian đã bán cho những ngày đã điểm danh.

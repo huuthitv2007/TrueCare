@@ -56,6 +56,11 @@ export function migrateDirectory(states: { owner: string; state: AppState }[]) {
       });
     for (const o of state.orders) {
       o.customerId = customers.get(o.customerId) ?? o.customerId;
+      for (const revision of o.revisions ?? []) {
+        revision.before.customerId = customers.get(revision.before.customerId) ?? revision.before.customerId;
+        if (revision.after) revision.after.customerId = customers.get(revision.after.customerId) ?? revision.after.customerId;
+        for (const line of [...revision.before.lines, ...(revision.after?.lines ?? [])]) line.productId = products.get(line.productId) ?? line.productId;
+      }
       for (const l of o.lines)
         l.productId = products.get(l.productId) ?? l.productId;
     }
@@ -66,6 +71,15 @@ export function migrateDirectory(states: { owner: string; state: AppState }[]) {
       i.productId = products.get(i.productId) ?? i.productId;
     for (const v of state.visits)
       v.customerId = customers.get(v.customerId) ?? v.customerId;
+    const remapCustomers = (values: string[]) => [...new Set(values.map(value => customers.get(value) ?? value))];
+    for (const schedule of state.routeSchedules ?? []) {
+      schedule.customerIds = remapCustomers(schedule.customerIds);
+      if (schedule.completedCustomerIds) schedule.completedCustomerIds = remapCustomers(schedule.completedCustomerIds);
+      for (const revision of schedule.resultHistory ?? []) {
+        revision.before.completedCustomerIds = remapCustomers(revision.before.completedCustomerIds);
+        revision.after.completedCustomerIds = remapCustomers(revision.after.completedCustomerIds);
+      }
+    }
     state.products = [];
     state.customers = [];
   }

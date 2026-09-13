@@ -98,7 +98,7 @@ for (const width of [360, 390, 768, 1023, 1024, 1440, 1920])
             )
           ) {
             await page.screenshot({
-              path: `docs/design/admin-delete/${route === "/" ? "dashboard" : route.slice(1).replaceAll("/", "-")}-${width}-${theme}.png`,
+              path: `test-results/acceptance/${route === "/" ? "dashboard" : route.slice(1).replaceAll("/", "-")}-${width}-${theme}-${testInfo.project.name}.png`,
               fullPage: true,
             });
           }

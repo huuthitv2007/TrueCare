@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test';
-import { emptyState } from '../server/domain';
+import { emptyState as initialState } from '../server/domain';
+import { businessDate } from '../shared/business-date';
+const emptyState = (name: string) => {
+  const state = initialState(name);
+  state.attendance = [{ date: businessDate(), status: 'worked', updatedAt: new Date().toISOString(), reason: 'E2E setup: attendance already recorded' }];
+  return state;
+};
 
 test('admin delete reports blocked results and retries with the same request ID',async({page})=>{
   const state=emptyState('admin');

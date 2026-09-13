@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { seedOwnWorkspace } from "./test-seed";
+import { businessDate } from "../shared/business-date";
 
 test("theme persists and the workspace remains responsive", async ({
   page,
@@ -17,6 +19,7 @@ test("theme persists and the workspace remains responsive", async ({
     },
   });
   expect(registration.ok()).toBeTruthy();
+  await seedOwnWorkspace(request, [{ type: "setAttendance", payload: { date: businessDate(), status: "worked", reason: "E2E theme fixture" } }]);
 
   await page.goto("/");
   await page.getByLabel("Email hoặc tên đăng nhập").fill(username);

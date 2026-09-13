@@ -8,9 +8,19 @@ import {
 } from "./shared-directory.js";
 import { defaultCatalogs } from "../shared/catalogs.js";
 import type { Actor } from "./order-lifecycle.js";
+import { businessDate } from "../shared/business-date.js";
 import type { AppState, Command } from "../shared/types.js";
 
 export function createSupabaseAdapter(url: string, serviceKey: string) {
+  async function allRows(factory: () => any): Promise<{ data: any[]; error: any }> {
+    const data: any[] = [];
+    for (let start = 0; ; start += 500) {
+      const page = await factory().range(start, start + 499);
+      if (page.error) return { data: [], error: page.error };
+      data.push(...(page.data ?? []));
+      if ((page.data ?? []).length < 500) return { data, error: null };
+    }
+  }
   const admin = createClient(url, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -68,25 +78,26 @@ export function createSupabaseAdapter(url: string, serviceKey: string) {
     } as Directory;
     const [meta, balances, movements, prices] = await Promise.all([
       admin.from("company_inventory_meta").select("version").eq("id", true).maybeSingle(),
-      admin
+      allRows(() => admin
         .from("company_inventory")
         .select("product_id,quantity,tracked,updated_at,source")
-        .order("product_id"),
-      admin
+        .order("product_id")),
+      allRows(() => admin
         .from("inventory_movements")
         .select("id,product_id,movement_date,quantity,reason,reference_id")
         .or(`owner_id.eq.${owner},owner_id.is.null`)
-        .order("movement_date"),
-      admin
+        .order("movement_date").order("id")),
+      allRows(() => admin
         .from("product_prices")
         .select("product_id,cost,quote_price,pack,effective_date,created_at")
-        .lte("effective_date", new Date().toISOString().slice(0, 10))
+        .lte("effective_date", businessDate())
         .order("effective_date", { ascending: false })
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false }).order("product_id").order("id")),
     ]);
     const inventoryUnavailable = [meta.error, balances.error, movements.error].some(
       (error) => error && ["PGRST205", "42P01"].includes(error.code),
     );
+    if (prices.error) throw new DomainError("STORAGE", "Không tải đủ bảng giá hiện hành", 503);
     if (!prices.error) {
       const effective = new Map<string, (typeof prices.data)[number]>();
       for (const price of prices.data ?? [])
@@ -274,10 +285,28 @@ export function createSupabaseAdapter(url: string, serviceKey: string) {
         "Kho công ty đã thay đổi. Vui lòng tải lại.",
         "CONFLICT",
       );
-    const next = execute(current, command, verified);
+    const next = execute(current, command, { ...verified, workspaceOwnerId: owner } as Actor);
     return commitForOwner(owner, command, next, current, verified);
   }
   return {
+    async getStatesForOwners(owners: string[]) {
+      if (!owners.length) return [];
+      const first = await stateOf(owners[0]);
+      const common = directoryOf(first);
+      const [states, movements] = await Promise.all([
+        allRows(() => admin.from("employee_states").select("owner_id,state").order("owner_id")),
+        allRows(() => admin.from("inventory_movements").select("id,owner_id,product_id,movement_date,quantity,reason,reference_id").order("id")),
+      ]);
+      if (states.error || movements.error) throw new DomainError("STORAGE", "Không tải đủ dữ liệu tổng hợp", 503);
+      const byOwner = new Map(states.data.map(row => [row.owner_id, row.state]));
+      return owners.map(owner => {
+        const state = attachDirectory(byOwner.get(owner) ?? emptyState(), common, first.sharedVersion ?? 0);
+        state.inventoryVersion = first.inventoryVersion;
+        state.inventory = structuredClone(first.inventory);
+        state.inventoryMovements = movements.data.filter(row => row.owner_id === owner || row.owner_id === null).map(row => ({ id: row.id, productId: row.product_id, date: row.movement_date, quantity: Number(row.quantity), reason: row.reason, referenceId: row.reference_id }));
+        return refresh(state);
+      });
+    },
     async getState(jwt: string) {
       return stateOf(await ownerOf(jwt));
     },

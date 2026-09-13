@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import Decimal from "decimal.js";
 import { readOrderDraft, discardOrderDraft } from "../lib/order-draft";
@@ -227,7 +227,9 @@ export function OrderEditor() {
   );
 }
 function OrderEditorContent() {
-  const { state, command, busy, notify, user, adminTarget } = useWorkspace();
+  const { state, command, busy, notify, user, adminTarget, refresh } = useWorkspace();
+  const preservingDraft = useRef(false);
+  const [comparing, setComparing] = useState(false);
   const { id } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -286,6 +288,7 @@ function OrderEditorContent() {
   );
   useEffect(() => {
     if (order) {
+      if (preservingDraft.current) { preservingDraft.current = false; return; }
       if (recovered && order.version === recovered.version) return;
       setCustomerId(order.customerId);
       setDate(order.date);
@@ -422,18 +425,16 @@ function OrderEditorContent() {
           reason: revisionReason,
         });
       } else {
-        next = await command("saveOrder", {
+        next = await command(confirmAfter ? "saveAndConfirmOrder" : "saveOrder", {
           order: { id: order?.id, customerId, date, notes, lines },
         });
       }
       const saved = order
         ? next.orders.find((o) => o.id === order.id)
-        : next.orders.at(-1);
+        : next.orders.find((o) => o.id === next.commandResult?.orderId);
       setDirty(false);
       discardOrderDraft(draftKey);
       setEditingFinalized(false);
-      if (saved && confirmAfter)
-        await command("confirmOrder", { id: saved.id });
       if (saved) navigate(`/orders/${saved.id}`, { replace: true });
       notify(
         order && order.status !== "draft"
@@ -515,7 +516,12 @@ function OrderEditorContent() {
           </>
         }
       />
-      {error && <Notice type="error">{error}</Notice>}
+      {error && <Notice type="error">{error}<Button onClick={async () => { preservingDraft.current = true; await refresh(); setComparing(true); }}>Tải dữ liệu để đối chiếu</Button></Notice>}
+      {comparing && <Modal title="Đối chiếu dữ liệu mới" onClose={() => setComparing(false)}>
+        <Notice>Nội dung đang nhập được giữ nguyên. Kiểm tra dữ liệu máy chủ trước khi chủ động lưu lại.</Notice>
+        {order ? <><p>Toa {order.code} · {order.status} · Tổng tiền {money(order.total)}</p><p>Ghi chú đã lưu: {order.notes || "Chưa có"}</p><ul>{order.lines.map(line => <li key={line.id}>{line.name}: {line.quantity} × {money(line.price)}</li>)}</ul></> : <p>Đã cập nhật bảng giá, quỹ và tồn kho.</p>}
+        <Button onClick={() => { preservingDraft.current = false; setComparing(false); }}>Tiếp tục đối chiếu nội dung đang nhập</Button>
+      </Modal>}
       {recovered && (
         <Notice type="info">
           Đã phục hồi bản nháp chưa lưu trên thiết bị này.

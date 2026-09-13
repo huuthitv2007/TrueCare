@@ -17,6 +17,8 @@ import type {
   Product,
 } from "../shared/types.js";
 import { defaultCatalogs } from "../shared/catalogs.js";
+import { businessDate } from "../shared/business-date.js";
+import { executeCareCommand, markCareReviewNeeded } from "./care-domain.js";
 
 Decimal.set({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
 export class DomainError extends Error {
@@ -36,13 +38,7 @@ export function assert(
   if (!test) throw new DomainError(code, message, {FORBIDDEN:403,CONFLICT:409,REFERENCED:409,RATE_LIMIT:429,SESSION_EXPIRED:401}[code] ?? 400);
 }
 const id = () => randomUUID();
-const date = () =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+const date = () => businessDate();
 const validDate = (value: any) => {
   assert(
     typeof value === "string" &&
@@ -169,6 +165,7 @@ const returnEmployeeSales = (s: AppState, r: AppState["returns"][number]) =>
     }),
   );
 export function refresh(s: AppState) {
+  markCareReviewNeeded(s);
   const activeIds = new Set(
     s.orders.filter((o) => !o.deletedAt).map((o) => o.id),
   );
@@ -178,7 +175,7 @@ export function refresh(s: AppState) {
   const fund = sum(s.ledger.map((l) => l.amount));
   const reserved = sum([
     ...orders.map((o) => o.reserved),
-    ...s.programs.filter((p) => p.status === "active").map((p) => p.reserved),
+    ...s.programs.filter((p) => p.status === "active" && p.expiresAt >= date()).map((p) => p.reserved),
   ]);
   const employeeDelivered = sum(
     deliveries.map((d) => deliveryEmployeeSales(s, d)),
@@ -285,7 +282,7 @@ export function reservedStock(
     s.programs
       .filter(
         (p) =>
-          p.id !== excludeProgram && p.status === "active" && p.guaranteeStock,
+          p.id !== excludeProgram && p.status === "active" && p.expiresAt >= date() && p.guaranteeStock,
       )
       .reduce(
         (a, p) =>
@@ -352,6 +349,25 @@ function audit(
     details,
   });
 }
+function confirmDraft(s: AppState, o: Order) {
+  assert(o.status === "draft", "Toa không còn ở trạng thái nháp");
+  for (const line of o.lines) {
+    const product = found(s.products, line.productId);
+    assert(!product.archived && !product.deletedAt, "Sản phẩm không còn kinh doanh", "CONFLICT");
+    line.cost = product.cost;
+    line.ceiling = product.price;
+    line.pack = product.pack;
+    if (!o.historical && line.kind === "sale")
+      assert(product.price !== null && D(line.price).lte(product.price), "Giá chào đã thay đổi, hãy sửa lại đơn", "PRICE_CEILING");
+  }
+  orderValues(o);
+  assert(o.margin !== null, "Cần bổ sung giá vốn hàng/quà trước khi chốt");
+  stockCheck(s, o.lines, o.id);
+  reserveOrder(s, o);
+  o.status = "confirmed";
+  o.version++;
+}
+
 export function execute(
   state: AppState,
   command: Command,
@@ -386,6 +402,13 @@ export function execute(
     );
   const s = structuredClone(state);
   const p = structuredClone(command.payload ?? {});
+  for (const program of s.programs) {
+    if (program.status === "active" && program.expiresAt < businessDate(actor?.now)) {
+      program.status = "expired";
+      program.reserved = "0";
+      audit(s, "expireProgram", program.id, "Hết hạn chương trình theo ngày Việt Nam");
+    }
+  }
   refresh(s);
   const ref = p.id ?? p.orderId ?? p.order?.id;
   if (!["restoreOrder", "purgeOrder"].includes(command.type) && ref)
@@ -409,7 +432,7 @@ export function execute(
       "Dữ liệu đã thay đổi. Vui lòng tải lại trước khi lưu.",
       "CONFLICT",
     );
-  switch (command.type) {
+  if (!executeCareCommand(s, command, actor)) switch (command.type) {
     case "saveProduct": {
       const x = p.product ?? p;
       assert(typeof x.name === "string" && x.name.trim(), "Cần tên sản phẩm");
@@ -614,7 +637,8 @@ export function execute(
       assert(customer.deletedAt && !customer.mergedInto, "Khách hàng phải nằm trong thùng rác", "CONFLICT");
       assert(
         !s.orders.some((order) => order.customerId === customer.id) &&
-          !s.visits.some((visit) => visit.customerId === customer.id),
+          !s.visits.some((visit) => visit.customerId === customer.id) &&
+          !(s.routeSchedules ?? []).some(schedule => schedule.customerIds.includes(customer.id) || schedule.completedCustomerIds?.includes(customer.id)),
         "Khách hàng còn lịch sử nên không thể xoá vĩnh viễn",
         "REFERENCED",
       );
@@ -680,6 +704,7 @@ export function execute(
         const removed=current[key as keyof typeof linkedFields].filter(value=>!next[key as keyof typeof linkedFields].includes(value));
         assert(!s.customers.some(customer=>removed.includes(customer[field as typeof linkedFields[keyof typeof linkedFields]]!)),
           "Danh mục còn được khách hàng sử dụng; hãy đổi tên có kiểm soát", "REFERENCED");
+        if (key === "routes") assert(!(s.routeSchedules ?? []).some(schedule => removed.includes(schedule.route)), "Tuyến còn được lịch chăm sóc sử dụng", "REFERENCED");
       }
       const productFields = {brands:'brand',groups:'group',units:'unit'} as const;
       for (const [key,field] of Object.entries(productFields)) {
@@ -720,6 +745,7 @@ export function execute(
       audit(s, command.type, `${kind}:${oldValue}`, JSON.stringify({ newValue, reason }));
       break;
     }
+    case "saveAndConfirmOrder":
     case "saveOrder": {
       const x = p.order ?? p;
       const customer = found(s.customers, x.customerId);
@@ -728,11 +754,12 @@ export function execute(
       assert(!old || old.status === "draft", "Chỉ được sửa trực tiếp toa nháp");
       const item: Order = {
         id: old?.id ?? id(),
+        creationCommandKey: old?.creationCommandKey ?? command.idempotencyKey,
         code:
           old?.code ??
           "TC-" +
             String(
-              s.audit.filter((a) => a.type === "saveOrder").length + 1,
+              s.audit.filter((a) => ["saveOrder", "saveAndConfirmOrder"].includes(a.type)).length + 1,
             ).padStart(5, "0"),
         customerId: x.customerId,
         date: validDate(x.date ?? date()),
@@ -748,6 +775,7 @@ export function execute(
       orderValues(item);
       if (old) Object.assign(old, item);
       else s.orders.push(item);
+      if (command.type === "saveAndConfirmOrder") confirmDraft(s, old ?? item);
       break;
     }
     case "reviseOrder": {
@@ -757,26 +785,7 @@ export function execute(
     }
     case "confirmOrder": {
       const o = found(s.orders, p.id);
-      assert(o.status === "draft", "Toa không còn ở trạng thái nháp");
-      for (const l of o.lines) {
-        const prod = found(s.products, l.productId);
-        l.cost = prod.cost;
-        l.ceiling = prod.price;
-        l.pack = prod.pack;
-        if (!o.historical && l.kind === "sale") {
-          assert(
-            prod.price !== null && D(l.price).lte(prod.price),
-            "Giá chào đã thay đổi, hãy sửa lại đơn",
-            "PRICE_CEILING",
-          );
-        }
-      }
-      orderValues(o);
-      assert(o.margin !== null, "Cần bổ sung giá vốn hàng/quà trước khi chốt");
-      stockCheck(s, o.lines, o.id);
-      reserveOrder(s, o);
-      o.status = "confirmed";
-      o.version++;
+      confirmDraft(s, o);
       break;
     }
     case "deleteOrder": {
@@ -1065,116 +1074,6 @@ export function execute(
       });
       break;
     }
-    case "setAttendance": {
-      const workDate = validDate(p.date ?? date());
-      const status = ["worked", "cancelled", "leave"].includes(String(p.status))
-        ? String(p.status)
-        : "worked";
-      const now = actor?.now ?? new Date().toISOString();
-      const reason = String(p.reason ?? "").trim();
-      s.attendance ??= [];
-      const existing = s.attendance.find((item) => item.date === workDate);
-      const next = {
-        date: workDate,
-        status: status as "worked" | "cancelled" | "leave",
-        checkedInAt: status === "worked" ? (existing?.checkedInAt ?? now) : undefined,
-        updatedAt: now,
-        changedBy: actor?.id,
-        reason: reason || (status === "worked" ? "Điểm danh" : status === "leave" ? "Nghỉ phép" : "Hủy điểm danh"),
-      };
-      if (existing) Object.assign(existing, next);
-      else s.attendance.push(next);
-      s.attendance.sort((a, b) => a.date.localeCompare(b.date));
-      audit(s, command.type, workDate, next.reason);
-      break;
-    }
-    case "saveRouteSchedule": {
-      const scheduleDate = validDate(p.date);
-      const startTime = validTime(p.startTime);
-      const endTime = validTime(p.endTime);
-      assert(startTime < endTime, "Giờ kết thúc phải sau giờ bắt đầu");
-      const route = String(p.route ?? "").trim();
-      assert(route.length > 0, "Chọn tuyến chăm sóc");
-      const customerIds: string[] = Array.isArray(p.customerIds)
-        ? Array.from(new Set<string>(p.customerIds.map((value: unknown) => String(value))))
-        : [];
-      for (const customerId of customerIds) {
-        const customer = found(s.customers, customerId);
-        assert(!customer.archived && !customer.deletedAt && !customer.mergedInto, "Khách hàng không còn hoạt động", "CONFLICT");
-      }
-      s.routeSchedules ??= [];
-      const now = actor?.now ?? new Date().toISOString();
-      const existing = p.id ? s.routeSchedules.find((item) => item.id === String(p.id)) : undefined;
-      if (existing) {
-        assert(!existing.deletedAt, "Lịch đã bị xóa", "CONFLICT");
-        Object.assign(existing, {
-          date: scheduleDate,
-          startTime,
-          endTime,
-          route,
-          notes: String(p.notes ?? ""),
-          customerIds,
-          updatedAt: now,
-        });
-        audit(s, command.type, existing.id, "Cập nhật lịch theo tuyến");
-      } else {
-        const item = {
-          id: id(),
-          date: scheduleDate,
-          startTime,
-          endTime,
-          route,
-          notes: String(p.notes ?? ""),
-          customerIds,
-          status: "planned" as const,
-          createdAt: now,
-          updatedAt: now,
-        };
-        s.routeSchedules.push(item);
-        audit(s, command.type, item.id, "Tạo lịch theo tuyến");
-      }
-      s.routeSchedules.sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
-      break;
-    }
-    case "deleteRouteSchedule": {
-      const item = found(s.routeSchedules ?? [], String(p.id));
-      assert(!item.deletedAt, "Lịch đã bị xóa", "CONFLICT");
-      const reason = String(p.reason ?? "").trim();
-      assert(reason.length >= 3, "Cần lý do xóa lịch");
-      item.status = "cancelled";
-      item.deletedAt = actor?.now ?? new Date().toISOString();
-      item.deletedBy = actor?.id;
-      item.deleteReason = reason;
-      item.updatedAt = item.deletedAt;
-      audit(s, command.type, item.id, reason);
-      break;
-    }
-    case "completeRouteSchedule": {
-      const item = found(s.routeSchedules ?? [], String(p.id));
-      assert(!item.deletedAt, "Lịch đã bị xóa", "CONFLICT");
-      const completedCustomerIds: string[] = Array.isArray(p.completedCustomerIds)
-        ? Array.from(new Set<string>(p.completedCustomerIds.map((value: unknown) => String(value))))
-        : item.customerIds;
-      assert(completedCustomerIds.every((customerId) => item.customerIds.includes(customerId)), "Khách hoàn thành không nằm trong lịch");
-      for (const customerId of completedCustomerIds) {
-        const customer = found(s.customers, customerId);
-        assert(!customer.archived && !customer.deletedAt && !customer.mergedInto, "Khách hàng không còn hoạt động", "CONFLICT");
-      }
-      const firstCompletion = item.status !== "completed";
-      const now = actor?.now ?? new Date().toISOString();
-      const resultNotes = String(p.resultNotes ?? "").trim();
-      item.status = "completed";
-      item.completedAt = item.completedAt ?? now;
-      item.completedCustomerIds = completedCustomerIds;
-      item.resultNotes = resultNotes;
-      item.updatedAt = now;
-      if (firstCompletion) {
-        for (const customerId of completedCustomerIds)
-          s.visits.push({ id: id(), customerId, date: item.date, notes: resultNotes || `Chăm sóc tuyến ${item.route}` });
-      }
-      audit(s, command.type, item.id, resultNotes || "Hoàn thành lịch theo tuyến");
-      break;
-    }
     case "updateSettings": {
       const x = p.settings ?? p;
       const allowed = [
@@ -1201,6 +1100,7 @@ export function execute(
       break;
     }
     case "reserveProgram": {
+      assert(validDate(p.expiresAt ?? date()) >= date(), "Ngày hết hạn phải từ hôm nay");
       const ls = parseOrderLines(s, p.lines);
       assert(
         ls.every((l) => l.cost !== null),
@@ -1294,6 +1194,7 @@ export function execute(
       prog.reserved = money(D(prog.subsidy).times(prog.remaining));
       const o: Order = {
         id: id(),
+        creationCommandKey: command.idempotencyKey,
         code: "TC-" + String(s.orders.length + 1).padStart(5, "0"),
         customerId: p.customerId,
         date: validDate(p.date ?? date()),

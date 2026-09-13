@@ -261,6 +261,7 @@ describe("Quỹ thực giao và giữ ngân sách", () => {
   });
   it("lịch theo tuyến gợi ý khách, hoàn thành ghi lượt chăm sóc và xóa mềm", () => {
     let s = emptyState("Nhân viên tuyến");
+    s.catalogs!.routes = ["Tuyến A"];
     s = run(s, "saveCustomer", { name: "Cửa hàng A", route: "Tuyến A" });
     s = run(s, "saveRouteSchedule", {
       date: "2026-09-13",
@@ -277,11 +278,12 @@ describe("Quỹ thực giao và giữ ngân sách", () => {
       id: schedule.id,
       completedCustomerIds: [s.customers[0].id],
       resultNotes: "Đã chăm sóc",
+      performedDate: "2026-09-13",
     });
     assert.equal(s.routeSchedules![0].status, "completed");
     assert.equal(s.visits.length, 1);
     assert.equal(s.visits[0].date, "2026-09-13");
-    s = run(s, "completeRouteSchedule", { id: schedule.id, completedCustomerIds: [s.customers[0].id], resultNotes: "Cập nhật kết quả" });
+    s = run(s, "completeRouteSchedule", { id: schedule.id, completedCustomerIds: [s.customers[0].id], resultNotes: "Đã chăm sóc", performedDate: "2026-09-13" });
     assert.equal(s.visits.length, 1);
     s = run(s, "deleteRouteSchedule", { id: schedule.id, reason: "Đổi tuyến chăm sóc" });
     assert.ok(s.routeSchedules![0].deletedAt);

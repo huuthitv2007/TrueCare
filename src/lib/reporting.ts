@@ -1,5 +1,6 @@
 import Decimal from "decimal.js";
 import type { AppState, Order, OrderLine } from "../../shared/types";
+import { businessDate } from "../../shared/business-date";
 
 export type ReportMode = "ordered" | "delivered";
 export interface ReportFilters {
@@ -315,7 +316,7 @@ export function attendanceDaysBetween(
   to: string,
 ): number {
   return (state.attendance ?? []).filter(
-    (item) => item.status === "worked" && item.date >= from && item.date <= to,
+    (item) => item.status === "worked" && item.date >= from && item.date <= to && item.date <= businessDate(),
   ).length;
 }
 export function attendanceForDate(state: AppState, date: string) {
@@ -393,7 +394,7 @@ export function dailyReport(
           fold(r.product).includes(fold(String(cfg.focusProduct))),
       ),
     );
-  const careVisits = state.visits.filter((visit) => visit.date === date).length;
+  const careVisits = state.visits.filter((visit) => visit.date === date && !visit.voidedAt).length;
   return [
     `BCDS Ngày ${date.split("-").reverse().join("/")}`,
     `NV: ${cfg.displayName} - Tuyến: ${routes}`,

@@ -1,5 +1,6 @@
 import express from "express";
 import { readListFilter } from './list-filter.js';
+import { registerPasswordRecovery } from "./password-recovery.js";
 import { createClient } from "@supabase/supabase-js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -321,69 +322,55 @@ function summaryFor(state: AppState, from?: string, to?: string) {
   };
 }
 async function team(from?: string, to?: string) {
-  const { data, error } = await admin
-    .from("employee_accounts")
-    .select(accountFields)
-    .order("created_at");
-  if (error)
-    throw new DomainError("STORAGE", "Không tải được danh sách nhân viên", 503);
-  const members: TeamMember[] = [];
-  for (const raw of data ?? []) {
-    const account = asAccount(raw);
-    const { data: stateRow, error: stateError } = await admin
-      .from("employee_states")
-      .select("state,updated_at")
-      .eq("owner_id", account.user_id)
-      .maybeSingle();
-    if (stateError)
-      throw new DomainError("STORAGE", "Không tải được dữ liệu toàn đội", 503);
-    const state = stateRow?.state
-      ? await store.getStateForOwner(account.user_id)
-      : null;
-    members.push({
+  const rows: AccountRow[] = [];
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await admin.from("employee_accounts").select(accountFields)
+      .order("created_at").order("user_id").range(offset, offset + 499);
+    if (error) throw new DomainError("STORAGE", "Không tải được danh sách nhân viên", 503);
+    rows.push(...(data ?? []).map(asAccount));
+    if ((data ?? []).length < 500) break;
+  }
+  const metadata = new Map<string, { updated_at: string | null }>();
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await admin.from("employee_states").select("owner_id,updated_at")
+      .order("owner_id").range(offset, offset + 499);
+    if (error) throw new DomainError("STORAGE", "Không tải được dữ liệu toàn đội", 503);
+    for (const row of data ?? []) metadata.set(row.owner_id, row);
+    if ((data ?? []).length < 500) break;
+  }
+  const existingOwners = rows.filter(account => metadata.has(account.user_id)).map(account => account.user_id);
+  const states = await store.getStatesForOwners(existingOwners);
+  const byOwner = new Map(existingOwners.map((owner, index) => [owner, states[index]]));
+  return rows.map((account): TeamMember => {
+    const state = byOwner.get(account.user_id);
+    return {
       ...employeeAccount(account),
-      summary: state
-        ? summaryFor(state, from, to)
-        : {
-            ordered: "0",
-            delivered: "0",
-            customerDelivered: "0",
-            collected: "0",
-            fund: "0",
-            reserved: "0",
-            available: "0",
-            pendingMargin: "0",
-            unresolved: 0,
-          },
+      summary: state ? summaryFor(state, from, to) : {
+        ordered: "0", delivered: "0", customerDelivered: "0", collected: "0",
+        fund: "0", reserved: "0", available: "0", pendingMargin: "0", unresolved: 0,
+      },
       stateVersion: state?.version ?? 0,
-      stateUpdatedAt: stateRow?.updated_at ?? null,
-    });
-  }
-  return members;
+      stateUpdatedAt: metadata.get(account.user_id)?.updated_at ?? null,
+    };
+  });
 }
-
 async function ownedStates(): Promise<OwnedState[]> {
-  const { data, error } = await admin
-    .from("employee_accounts")
-    .select("user_id,display_name")
-    .order("created_at");
-  if (error)
-    throw new DomainError("STORAGE", "Không tải được dữ liệu toàn hệ thống", 503);
-  const states: OwnedState[] = [];
-  for (const account of data ?? []) {
-    states.push({
-      ownerId: account.user_id,
-      ownerName: account.display_name,
-      state: await store.getStateForOwner(account.user_id),
-    });
+  const accounts: {user_id: string; display_name: string}[] = [];
+  for (let offset = 0; ; offset += 500) {
+    const {data,error} = await admin.from("employee_accounts").select("user_id,display_name").order("user_id").range(offset,offset+499);
+    if (error) throw new DomainError("STORAGE", "Không tải được dữ liệu toàn hệ thống", 503);
+    accounts.push(...(data ?? []));
+    if ((data ?? []).length < 500) break;
   }
-  return states;
+  const states = await store.getStatesForOwners(accounts.map(account => account.user_id));
+  return accounts.map((account,index) => ({ownerId: account.user_id, ownerName: account.display_name, state: states[index]}));
 }
 
 function pageQuery(req: express.Request) {
+  const page = Number(req.query.page ?? 1), size = Number(req.query.pageSize ?? 25);
   return {
-    page: Number(req.query.page ?? 1),
-    pageSize: Number(req.query.pageSize ?? 25),
+    page: Number.isSafeInteger(page) && page > 0 ? Math.min(page, 1000000) : 1,
+    pageSize: Number.isSafeInteger(size) && size > 0 ? Math.min(size, 100) : 25,
   };
 }
 
@@ -699,20 +686,16 @@ app.delete("/api/auth/sessions/:id", route(async (req, res) => {
   }
   res.json({ ok: true, current: data.id === sessionIdOf(req) });
 }));
-app.post(
-  "/api/auth/forgot-password",
-  route(async (req, res) => {
-    await consumeRateLimit(rateKey("password-recovery", String(req.ip)), 5, 15 * 60, "Vui lòng chờ trước khi yêu cầu khôi phục lần nữa.");
-    try {
-      const account = await resolveLogin(String(req.body.email??''));
-      const reset = await auth.auth.resetPasswordForEmail(account.email, { redirectTo: process.env.APP_ORIGIN });
-      if(reset.error) throw new DomainError("STORAGE","Không gửi được hướng dẫn khôi phục lúc này",503);
-    } catch(error) {
-      if(error instanceof DomainError && error.code==='STORAGE')throw error;
-    }
-    res.json({ message: "Nếu email hợp lệ, hướng dẫn khôi phục đã được gửi." });
-  }),
-);
+registerPasswordRecovery(app, {
+  url, anonKey, admin, secret: serviceKey,
+  origin: process.env.APP_ORIGIN ?? "https://truecare-employee.onrender.com",
+  resolveEmail: async login => {
+    try { const account = await resolveLogin(login); return account.active && !account.deleted_at ? account.email : null; }
+    catch(error) { if(error instanceof DomainError && error.code === "STORAGE") throw error; return null; }
+  },
+  revokeSessions,
+  rateLimit: (req, action) => consumeRateLimit(rateKey(action, String(req.ip)), 5, 15 * 60, "Vui lòng chờ trước khi thử khôi phục lại."),
+});
 app.post(
   "/api/auth/change-password",
   route(async (req, res) => {
@@ -980,7 +963,7 @@ app.delete(
     const reason = reasonOf(req.body.reason);
     const states = await ownedStates();
     const usage = customerUsage(states, String(req.params.id));
-    assert(usage.orders === 0 && usage.visits === 0, "Khách hàng còn lịch sử nên chỉ có thể lưu trong thùng rác", "CUSTOMER_HAS_HISTORY");
+    assert(usage.orders === 0 && usage.visits === 0 && usage.schedules === 0, "Khách hàng còn lịch sử nên chỉ có thể lưu trong thùng rác", "CUSTOMER_HAS_HISTORY");
     await executeAdminCommand(session.user.id, session.user, "purgeCustomer", {
       id: String(req.params.id),
       reason,
@@ -1334,6 +1317,22 @@ app.get(
     }),
   ),
 );
+for (const [resource, view] of [["route-schedules", "admin_route_schedule_list"], ["attendance-requests", "admin_attendance_request_list"]]) {
+  app.get(`/api/admin/${resource}`, route(async(req,res) => {
+    const filter = readListFilter(req.query), {page,pageSize} = pageQuery(req);
+    let query = admin.from(view).select("*", {count:"exact"}).order("date", {ascending:false}).order("owner_id").order("id");
+    if(filter.from) query = query.gte("date",filter.from);
+    if(filter.to) query = query.lte("date",filter.to);
+    if(filter.ownerId) query = query.eq("owner_id",filter.ownerId);
+    if(filter.q) query = query.ilike("search_text", `%${filter.q.replace(/[\\%_]/g, "\\$&")}%`);
+    if(req.query.status && req.query.status !== "all") query = query.eq("status",String(req.query.status));
+    if(req.query.route) query = query.eq("route",String(req.query.route));
+    if(req.query.routeId) query = query.eq("route_id",String(req.query.routeId));
+    const {data,error,count} = await query.range((page-1)*pageSize,page*pageSize-1);
+    if(error) throw new DomainError("STORAGE","Không tải được danh sách chăm sóc",503);
+    res.json({items:(data ?? []).map(row => ({...row.data,ownerId:row.owner_id,ownerName:row.owner_name,workspaceVersion:row.workspace_version,sharedVersion:row.shared_version,inventoryVersion:row.inventory_version})),total:count ?? 0,page,pageSize,pages:Math.max(1,Math.ceil((count ?? 0)/pageSize))});
+  }));
+}
 app.get(
   "/api/admin/workspaces/:userId",
   route(async (req, res) => {
@@ -1356,12 +1355,7 @@ app.post(
       command && typeof command.idempotencyKey === "string",
       "Thiếu thao tác quản trị",
     );
-    if (
-      ["deleteOrder", "restoreOrder", "purgeOrder", "reviseOrder"].includes(
-        command.type,
-      )
-    )
-      command.payload = { ...command.payload, reason };
+    command.payload = { ...command.payload, reason };
     const next =
       command.type === "commitImport"
         ? await commitImport(target.user_id, command, session.user)
@@ -1619,7 +1613,7 @@ app.post(
           before = current.customers.find((customer) => customer.id === item.id);
           if (action === "purge") {
             const usage = customerUsage(await ownedStates(), item.id);
-            assert(usage.orders === 0 && usage.visits === 0, "Khách hàng còn lịch sử nên không thể xoá vĩnh viễn", "CUSTOMER_HAS_HISTORY");
+            assert(usage.orders === 0 && usage.visits === 0 && usage.schedules === 0, "Khách hàng còn lịch sử nên không thể xoá vĩnh viễn", "CUSTOMER_HAS_HISTORY");
           }
           const next = await executeAdminCommand(session.user.id, session.user, type, { id: item.id, reason }, `${key}:${index}`);
           after = next.customers.find((customer) => customer.id === item.id);
@@ -1777,8 +1771,14 @@ app.use(
   express.static(path.resolve("dist"), {
     index: false,
     fallthrough: true,
+    setHeaders: (res, file) => { if (/[\\/]assets[\\/].+-[A-Za-z0-9_-]+\.(js|css)$/.test(file)) res.setHeader("Cache-Control", "public, max-age=31536000, immutable"); },
   }),
 );
+app.get("/robots.txt", (_req,res) => res.type("text").send("User-agent: *\nDisallow: /\n"));
+app.use("/assets", (_req,res) => res.status(404).type("text").send("Asset not found"));
+app.use("/media", (_req,res) => res.status(404).type("text").send("Asset not found"));
+app.use("/api", (_req,res) => res.status(404).json({error:{code:"NOT_FOUND",message:"API không tồn tại"}}));
+app.get(/\.(?:js|css|map|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|eot)$/i, (_req,res) => res.status(404).type("text").send("Asset not found"));
 app.get(/.*/, sendApplication);
 app.use(
   (

@@ -18,6 +18,8 @@ import {
   assert,
 } from "./domain.js";
 import type { AppState, User } from "../shared/types.js";
+import { listCareRows } from "./care-api.js";
+import { markCareReviewNeeded } from "./care-domain.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -49,6 +51,7 @@ db.exec(
   "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,username TEXT UNIQUE NOT NULL,display_name TEXT NOT NULL,password TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS states(owner_id TEXT PRIMARY KEY REFERENCES users(id),data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS commands(owner_id TEXT NOT NULL,key TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(owner_id,key)); CREATE TABLE IF NOT EXISTS previews(id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,data TEXT NOT NULL,expires INTEGER NOT NULL);",
 );
 const hash = (str: string) => createHash("sha256").update(str).digest("hex");
+db.exec("CREATE TABLE IF NOT EXISTS local_account_roles(user_id TEXT PRIMARY KEY REFERENCES users(id),role TEXT NOT NULL CHECK(role IN ('admin','employee')))");
 const passwordHash = (password: string) => {
   const salt = randomBytes(16).toString("hex");
   return salt + ":" + scryptSync(password, salt, 64).toString("hex");
@@ -76,7 +79,7 @@ const publicUser = (u: any): User => ({
   email: u.email,
   username: u.username,
   displayName: u.display_name,
-  role: "employee",
+  role: (db.prepare("SELECT role FROM local_account_roles WHERE user_id=?").get(u.id) as {role: User['role']} | undefined)?.role ?? "employee",
   active: true,
 });
 const cookie = (req: express.Request) => {
@@ -120,6 +123,23 @@ const asyncRoute =
   (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
   };
+if (process.env.NODE_ENV !== "production" && process.env.TRUECARE_E2E_BOOTSTRAP_SECRET) {
+  app.post("/api/test/seed", asyncRoute((req, res) => {
+    assert(req.get("x-test-secret") === process.env.TRUECARE_E2E_BOOTSTRAP_SECRET, "Không được phép", "FORBIDDEN");
+    const owner = String(req.body.ownerId);
+    assert(db.prepare("SELECT id FROM users WHERE id=?").get(owner), "Không tìm thấy tài khoản");
+    transaction(() => {
+      if (req.body.role) {
+        assert(["admin", "employee"].includes(req.body.role), "Quyền không hợp lệ");
+        db.prepare("INSERT INTO local_account_roles VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET role=excluded.role").run(owner, req.body.role);
+      }
+      let state = read(owner);
+      for (const command of req.body.commands ?? []) state = execute(state, {...command,version:state.version,idempotencyKey:randomUUID()}, {id:owner,role:"admin"});
+      write(owner,state);
+    });
+    res.json({ok:true,state:read(owner)});
+  }));
+}
 const rates = new Map<string, { count: number; until: number }>();
 app.use("/api/auth", (req, res, next) => {
   const key = req.ip ?? "local";
@@ -255,6 +275,28 @@ app.use("/api", (req, res, next) => {
   res.locals.user = user;
   next();
 });
+app.use("/api/admin", (req,res,next) => {
+  if (publicUser(res.locals.user).role !== "admin") { res.status(403).json({error:{code:"FORBIDDEN",message:"Chỉ quản trị viên được truy cập"}}); return; }
+  next();
+});
+const localOwnedStates = () => (db.prepare("SELECT id,display_name FROM users ORDER BY id").all() as {id:string;display_name:string}[]).map(u => ({ownerId:u.id,ownerName:u.display_name,state:read(u.id)}));
+app.get("/api/admin/team", (_req,res) => res.json({members: (db.prepare("SELECT * FROM users ORDER BY id").all() as any[]).map(u => ({...publicUser(u),createdAt:"",updatedAt:"",summary:read(u.id).summary,stateVersion:read(u.id).version}))}));
+for (const [path,resource] of [["route-schedules","routeSchedules"],["attendance-requests","attendanceRequests"]] as const)
+  app.get(`/api/admin/${path}`, asyncRoute((req,res) => res.json(listCareRows(localOwnedStates(),resource,req.query))));
+app.get("/api/admin/workspaces/:userId", asyncRoute((req,res) => res.json({state:read(String(req.params.userId))})));
+app.post("/api/admin/workspaces/:userId/commands", asyncRoute((req,res) => {
+  const owner = String(req.params.userId), actor = publicUser(res.locals.user);
+  assert(String(req.body.reason ?? "").trim().length >= 3,"Cần lý do quản trị");
+  const command = {...req.body.command,payload:{...req.body.command?.payload,reason:req.body.reason}};
+  assert(typeof command.idempotencyKey === "string" && command.idempotencyKey.length >= 8,"Cần khóa chống gửi lặp");
+  const fingerprint=hash(JSON.stringify({type:command.type,payload:command.payload}));
+  const result=transaction(() => {
+    const prior=db.prepare("SELECT fingerprint FROM commands WHERE owner_id=? AND key=?").get(owner,command.idempotencyKey) as {fingerprint:string}|undefined;
+    if(prior) {assert(prior.fingerprint===fingerprint,"Khóa đã dùng cho dữ liệu khác","CONFLICT");return read(owner);}
+    const next=execute(read(owner),command,{...actor,workspaceOwnerId:owner} as User);
+    write(owner,next);db.prepare("INSERT INTO commands VALUES(?,?,?)").run(owner,command.idempotencyKey,fingerprint);return next;
+  });res.json(result);
+}));
 app.post(
   "/api/auth/change-password",
   asyncRoute((req, res) => {
@@ -379,7 +421,7 @@ app.post(
           details: preview.filename,
         });
         state = refresh(state);
-      } else state = execute(state, cmd);
+      } else state = execute(state, cmd, publicUser(res.locals.user));
       write(owner, state);
       db.prepare("INSERT INTO commands VALUES(?,?,?)").run(
         owner,

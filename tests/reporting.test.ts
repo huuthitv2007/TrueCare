@@ -183,7 +183,7 @@ test("daily report counts only worked attendance days and omits method line", ()
       payload: { date, status, reason: `Trạng thái ${status}` },
       version: s.version,
       idempotencyKey: crypto.randomUUID(),
-    });
+    }, {id:"admin-test",role:"admin",now:"2026-09-13T12:00:00Z"});
   };
   run("2026-09-01", "worked");
   run("2026-09-02", "leave");

@@ -26,6 +26,10 @@ export function customerUsage(states: OwnedState[], customerId: string) {
       const visits = owned.state.visits.filter((x) => x.customerId === customerId);
       usage.orders += orders.length;
       usage.visits += visits.length;
+      usage.schedules += (owned.state.routeSchedules ?? []).filter(schedule =>
+        schedule.customerIds.includes(customerId) || schedule.completedCustomerIds?.includes(customerId) ||
+        schedule.resultHistory?.some(revision => revision.before.completedCustomerIds.includes(customerId) || revision.after.completedCustomerIds.includes(customerId)),
+      ).length;
       usage.revenue = new Decimal(usage.revenue)
         .plus(
           owned.state.deliveries
@@ -37,7 +41,7 @@ export function customerUsage(states: OwnedState[], customerId: string) {
         .toFixed(0);
       return usage;
     },
-    { orders: 0, visits: 0, revenue: "0" },
+    { orders: 0, visits: 0, schedules: 0, revenue: "0" },
   );
 }
 
@@ -111,7 +115,7 @@ export function catalogUsage(
 ) {
   if (kind === "districts") return customers.filter((x) => x.district === value).length;
   if (kind === "storeTypes") return customers.filter((x) => x.storeType === value).length;
-  if (kind === "routes") return customers.filter((x) => x.route === value).length;
+  if (kind === "routes") return customers.filter((x) => x.route === value).length + states.reduce((sum, owned) => sum + (owned.state.routeSchedules ?? []).filter(schedule => schedule.route === value || Boolean(schedule.routeId && owned.state.catalogEntries?.some(entry => entry.id === schedule.routeId && entry.value === value))).length, 0);
   if (kind === "frequencies") return customers.filter((x) => x.frequency === value).length;
   if (kind === "brands") return products.filter((x) => x.brand === value).length;
   if (kind === "groups") return products.filter((x) => x.group === value).length;

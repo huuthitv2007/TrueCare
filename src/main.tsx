@@ -6,7 +6,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AppState, EmployeeAccount, User } from "../shared/types";
-import { AppContext, request, useWorkspace } from "./api";
+import { ApiError, AppContext, request, useWorkspace } from "./api";
 import { Auth } from "./features/Auth";
 const AdminConsole = lazy(() =>
   import("./features/Admin").then((module) => ({
@@ -81,6 +81,8 @@ function Application() {
   const [session, setSession] = useState<User | null | undefined>(undefined);
   const [state, setState] = useState<AppState | null>(null);
   const [busy, setBusy] = useState(false);
+  const pendingCommand = useRef<{ fingerprint: string; operation: import("../shared/types").Command } | null>(null);
+  const submitting = useRef(false);
   const [toast, setToast] = useState("");
   const [adminTarget, updateAdminTarget] = useState<EmployeeAccount | null>(
     null,
@@ -149,11 +151,14 @@ function Application() {
   };
   const command = async (type: string, payload: unknown) => {
     if (!state) throw new Error("Chưa tải dữ liệu");
+    if (submitting.current) throw new Error("Thao tác trước đang được xử lý. Vui lòng chờ.");
     const generation = workspaceGeneration.current;
+    submitting.current = true;
     setBusy(true);
     try {
       let next: AppState;
-      const operation = {
+      const fingerprint = JSON.stringify([adminTarget?.id ?? session?.id, type, payload, adminTarget ? adminReason : ""]);
+      const operation = pendingCommand.current?.fingerprint === fingerprint ? pendingCommand.current.operation : {
         type,
         payload,
         idempotencyKey: crypto.randomUUID(),
@@ -161,6 +166,7 @@ function Application() {
         sharedVersion: state.sharedVersion,
         inventoryVersion: state.inventoryVersion,
       };
+      pendingCommand.current = { fingerprint, operation };
       if (adminTarget) {
         if (adminReason.trim().length < 3)
           throw new Error(
@@ -172,8 +178,14 @@ function Application() {
         );
       } else next = await request<AppState>("/api/commands", operation);
       if (generation === workspaceGeneration.current) setState(next);
-      return next;
+      pendingCommand.current = null;
+      const created = next.orders.find(order => order.creationCommandKey === operation.idempotencyKey);
+      return { ...next, commandResult: created ? { orderId: created.id } : undefined };
+    } catch (error) {
+      if (!(error instanceof ApiError) || (error.status > 0 && error.status < 500)) pendingCommand.current = null;
+      throw error;
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   };
@@ -205,7 +217,7 @@ function Application() {
         <Brand /> Đang mở TrueCare…
       </div>
     );
-  if (!session)
+  if (!session || window.location.pathname === "/reset-password" || window.location.pathname === "/forgot-password")
     return (
       <Auth
         onLogin={async () => {
@@ -309,6 +321,11 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
 
 const styleNonce = document.querySelector<HTMLMetaElement>('meta[name="csp-nonce"]')?.content;
 if (styleNonce) setNonce(styleNonce);
+
+// Supabase may redirect to the configured Site URL. Move a PKCE recovery
+// callback to the public reset route while preserving its one-time parameters.
+if (window.location.pathname === "/" && new URLSearchParams(window.location.search).has("code"))
+  window.history.replaceState(null, "", `/reset-password${window.location.search}`);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

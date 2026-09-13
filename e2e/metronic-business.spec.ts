@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 import type { AppState } from "../shared/types";
+import { seedOwnWorkspace } from "./test-seed";
+import { businessDate } from "../shared/business-date";
 
 test("real API: edit and confirm order, deliver, return, export and print", async ({
   page,
@@ -33,14 +35,14 @@ test("real API: edit and confirm order, deliver, return, export and print", asyn
     expect(response.ok(), await response.text()).toBeTruthy();
     return (await response.json()) as AppState;
   };
-  let state = await run("saveProduct", {
+  let state: AppState = await seedOwnWorkspace(context.request, [{ type: "saveProduct", payload: {
     name: "Nước giặt xả 3.6kg QA",
     group: "NƯỚC GIẶT XẢ TRUECARE",
     unit: "can",
     pack: 4,
     cost: "100000",
     price: "150000",
-  });
+  } }, { type: "setAttendance", payload: { date: businessDate(), status: "worked", reason: "E2E fixture attendance" } }]);
   const product = state.products.find(
     (p) => p.name === "Nước giặt xả 3.6kg QA",
   )!;
@@ -57,13 +59,7 @@ test("real API: edit and confirm order, deliver, return, export and print", asyn
   await page
     .getByLabel("Ghi chú toa")
     .fill("Giao vào buổi sáng — kiểm tra giao diện mới");
-  await page.getByRole("button", { name: "Lưu nháp", exact: true }).click();
-  await expect
-    .poll(
-      async () =>
-        (await getState()).orders.find((o) => o.id === order.id)?.notes,
-    )
-    .toContain("buổi sáng");
+  // One click must persist the edit and confirm atomically; no preliminary save hides the stale-version regression.
   await page.getByRole("button", { name: "Chốt đơn", exact: true }).click();
   await expect
     .poll(
@@ -71,6 +67,7 @@ test("real API: edit and confirm order, deliver, return, export and print", asyn
         (await getState()).orders.find((o) => o.id === order.id)?.status,
     )
     .toBe("confirmed");
+  expect((await getState()).orders.find(o => o.id === order.id)?.notes).toContain("buổi sáng");
   await page
     .getByRole("button", { name: /Ghi nhận.*giao|Giao hàng/ })
     .last()
@@ -151,9 +148,7 @@ test("real API: upload TXT, preview, acknowledge and commit import", async ({
     },
   });
   expect(response.ok()).toBeTruthy();
-  const before = await (await context.request.get("/api/state")).json();
-  const seeded = await context.request.post("/api/commands", {
-    data: {
+  await seedOwnWorkspace(context.request, [{
       type: "saveProduct",
       payload: {
         name: "Nước giặt xả 3.6kg",
@@ -163,11 +158,7 @@ test("real API: upload TXT, preview, acknowledge and commit import", async ({
         cost: "100000",
         price: "150000",
       },
-      version: before.version,
-      idempotencyKey: crypto.randomUUID(),
-    },
-  });
-  expect(seeded.ok(), await seeded.text()).toBeTruthy();
+  }, { type: "setAttendance", payload: { date: businessDate(), status: "worked", reason: "E2E fixture attendance" } }]);
   await page.goto("/imports");
   await page.getByLabel("Tệp cần nhập").setInputFiles({
     name: "qa-orders.txt",
