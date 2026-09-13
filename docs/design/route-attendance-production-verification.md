@@ -45,11 +45,22 @@ Ngày kiểm tra: 13/09/2026. Website: https://truecare-employee.onrender.com.
   - `/route-schedule` tạo và hoàn thành Lịch Theo Tuyến, kết quả được ghi thành lượt chăm sóc để dùng lại trong báo cáo.
   - `/admin` base redirect về dashboard chính; các phân hệ `/admin/*` vẫn còn để giữ chức năng quản trị và phân quyền.
 
-## Ghi chú nghiệm thu sau đăng nhập
+## Nghiệm thu sau đăng nhập admin
 
-Các phiên đăng nhập production lưu trong `.private/release-admin-storage.json`, `.private/smoke-admin-storage.json` và `.private/smoke-employee-storage.json` đều đã hết hạn: `/api/state` trả 401. Các credential có nhãn rõ trong `C:\Users\ZGAMESVN\Documents\account.txt` đã thử ở mức hạn chế và đều trả 401, không tiếp tục thử thêm để tránh khóa hoặc rate-limit tài khoản.
+Đã đăng nhập production bằng tài khoản admin được cung cấp trong phiên làm việc và chạy smoke chỉ đọc. Không lưu thông tin đăng nhập vào Git hoặc báo cáo.
 
-Do đó, phần nghiệm thu production sau đăng nhập admin chưa có bằng chứng hiện thời trong đợt bổ sung này. Cần một phiên admin hợp lệ hoặc credential đúng để kiểm tra trực tiếp các màn hình sau đăng nhập trên website thật: báo cáo cuối ngày, popup điểm danh, chương trình, Lịch Theo Tuyến và trạng thái redirect `/admin` khi đã xác thực. Không xác nhận xóa, điều chỉnh kho, bù trừ quỹ hoặc lưu trữ dữ liệu production trong bước kiểm tra này.
+Kết quả lưu tại `docs/design/route-attendance-auth-verification/authenticated-smoke.json`:
+
+- Session sau đăng nhập có role `admin`.
+- `/api/state` trả 200, state version tại thời điểm kiểm tra là 119.
+- `/` tải dashboard nhân viên, `/report` tải báo cáo cuối ngày, `/programs` tải form chương trình, `/route-schedule` tải Lịch Theo Tuyến.
+- `/admin` redirect về `/` sau khi đã xác thực; các phân hệ `/admin/overview`, `/admin/customers`, `/admin/products`, `/admin/inventory`, `/admin/funds`, `/admin/programs`, `/admin/imports`, `/admin/audit`, `/admin/employees`, `/admin/catalogs`, `/admin/system` vẫn truy cập được để giữ chức năng quản trị.
+- Nút Xóa dòng đang hiển thị trên dữ liệu production ở các danh sách có dữ liệu: khách hàng, sản phẩm, nhật ký, nhân viên và danh mục. Các danh sách không có dữ liệu hiển thị trạng thái bulk disabled đúng.
+- Modal Xóa sản phẩm mở được, có trường lý do quản trị và đóng bằng Escape/Hủy; không bấm xác nhận xóa.
+- Lịch Theo Tuyến không tràn ngang ở 360, 390, 768, 1023, 1024, 1440 và 1920px.
+- Không ghi nhận lỗi console hoặc response HTTP xấu trong smoke sau đăng nhập.
+
+Ảnh nghiệm thu đã mask dữ liệu bảng/thống kê nằm trong `docs/design/route-attendance-auth-verification/`, gồm dashboard, báo cáo, chương trình, Lịch Theo Tuyến và các phân hệ admin ở 1440px.
 
 ## Khôi phục
 

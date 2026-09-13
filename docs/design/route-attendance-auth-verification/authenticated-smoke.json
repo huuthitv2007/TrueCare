@@ -1,0 +1,205 @@
+{
+  "authenticatedRole": "admin",
+  "stateStatus": 200,
+  "stateVersion": 119,
+  "checks": [
+    {
+      "route": "/",
+      "h1": "Tổng quan",
+      "expected": "employee dashboard",
+      "overflow": 0,
+      "archiveFilter": 1,
+      "deleteButtons": 0,
+      "disabledBulkDelete": 0,
+      "moreButtons": 0
+    },
+    {
+      "route": "/report",
+      "h1": "Báo cáo cuối ngày",
+      "expected": "daily report",
+      "overflow": 0,
+      "archiveFilter": 0,
+      "deleteButtons": 0,
+      "disabledBulkDelete": 0,
+      "moreButtons": 0
+    },
+    {
+      "route": "/programs",
+      "h1": "Chương trình & random suất",
+      "expected": "program form",
+      "overflow": 0,
+      "archiveFilter": 0,
+      "deleteButtons": 0,
+      "disabledBulkDelete": 0,
+      "moreButtons": 0
+    },
+    {
+      "route": "/route-schedule",
+      "h1": "Lịch Theo Tuyến",
+      "expected": "route schedule",
+      "overflow": 0,
+      "archiveFilter": 1,
+      "deleteButtons": 0,
+      "disabledBulkDelete": 0,
+      "moreButtons": 0
+    },
+    {
+      "route": "/admin",
+      "redirectedTo": "/",
+      "h1": "Tổng quan"
+    },
+    {
+      "route": "/admin/overview",
+      "h1": "Quản trị TrueCare",
+      "expected": "admin section",
+      "overflow": 0,
+      "archiveFilter": 0,
+      "deleteButtons": 0,
+      "disabledBulkDelete": 0,
+      "moreButtons": 0
+    },
+    {
+      "route": "/admin/customers",
+      "h1": "Quản trị TrueCare",
+      "expected": "admin section",
+      "overflow": 0,
+      "archiveFilter": 1,
+      "deleteButtons": 1,
+      "disabledBulkDelete": 1,
+      "moreButtons": 1
+    },
+    {
+      "route": "/admin/products",
+      "h1": "Quản trị TrueCare",
+      "expected": "admin section",
+      "overflow": 0,
+      "archiveFilter": 1,
+      "deleteButtons": 25,
+      "disabledBulkDelete": 1,
+      "moreButtons": 25
+    },
+    {
+      "route": "/admin/inventory",
+      "h1": "Quản trị TrueCare",
+      "expected": "admin section",
+      "overflow": 0,
+      "archiveFilter": 0,
+      "deleteButtons": 0,
+      "disabledBulkDelete": 1,
+      "moreButtons": 0
+    },
+    {
+      "route": "/admin/funds",
+      "h1": "Quản trị TrueCare",
+      "expected": "admin section",
+      "overflow": 0,
+      "archiveFilter": 3,
+      "deleteButtons": 0,
+      "disabledBulkDelete": 2,
+      "moreButtons": 0
+    },
+    {
+      "route": "/admin/programs",
+      "h1": "Quản trị TrueCare",
+      "expected": "admin section",
+      "overflow": 0,
+      "archiveFilter": 0,
+      "deleteButtons": 0,
+      "disabledBulkDelete": 0,
+      "moreButtons": 0
+    },
+    {
+      "route": "/admin/imports",
+      "h1": "Quản trị TrueCare",
+      "expected": "admin section",
+      "overflow": 0,
+      "archiveFilter": 3,
+      "deleteButtons": 0,
+      "disabledBulkDelete": 1,
+      "moreButtons": 0
+    },
+    {
+      "route": "/admin/audit",
+      "h1": "Quản trị TrueCare",
+      "expected": "admin section",
+      "overflow": 0,
+      "archiveFilter": 4,
+      "deleteButtons": 25,
+      "disabledBulkDelete": 1,
+      "moreButtons": 0
+    },
+    {
+      "route": "/admin/employees",
+      "h1": "Quản trị TrueCare",
+      "expected": "admin section",
+      "overflow": 0,
+      "archiveFilter": 1,
+      "deleteButtons": 1,
+      "disabledBulkDelete": 2,
+      "moreButtons": 2
+    },
+    {
+      "route": "/admin/catalogs",
+      "h1": "Quản trị TrueCare",
+      "expected": "admin section",
+      "overflow": 0,
+      "archiveFilter": 0,
+      "deleteButtons": 7,
+      "disabledBulkDelete": 1,
+      "moreButtons": 0
+    },
+    {
+      "route": "/admin/system",
+      "h1": "Quản trị TrueCare",
+      "expected": "admin section",
+      "overflow": 0,
+      "archiveFilter": 0,
+      "deleteButtons": 0,
+      "disabledBulkDelete": 0,
+      "moreButtons": 0
+    },
+    {
+      "route": "/admin/products",
+      "modalOpened": true,
+      "hasReason": true,
+      "dialogText": "Đưa vào thùng rác 1 dòngGiữ lịch sử và chỉ xử lý những dòng đủ điều kiện. Có thể khôi phục từ thùng rác.### · BG Bột giặt nhiệt 2.9kg MR Care C10Lý do quản trịHủyĐưa vào thùng rác"
+    },
+    {
+      "route": "/route-schedule",
+      "width": 360,
+      "overflow": 0
+    },
+    {
+      "route": "/route-schedule",
+      "width": 390,
+      "overflow": 0
+    },
+    {
+      "route": "/route-schedule",
+      "width": 768,
+      "overflow": 0
+    },
+    {
+      "route": "/route-schedule",
+      "width": 1023,
+      "overflow": 0
+    },
+    {
+      "route": "/route-schedule",
+      "width": 1024,
+      "overflow": 0
+    },
+    {
+      "route": "/route-schedule",
+      "width": 1440,
+      "overflow": 0
+    },
+    {
+      "route": "/route-schedule",
+      "width": 1920,
+      "overflow": 0
+    }
+  ],
+  "errors": [],
+  "bad": []
+}
