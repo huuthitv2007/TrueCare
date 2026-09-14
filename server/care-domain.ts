@@ -18,8 +18,10 @@ function status(value: unknown): AttendanceStatus {
 function attendanceFingerprint(value?: AttendanceRecord) {
   return value ? JSON.stringify([value.date, value.status, value.version ?? 0, value.updatedAt, value.checkedInAt, value.changedBy, value.reason]) : "absent";
 }
-function reason(value: unknown): string {
+const ADMIN_REASON = "Cập nhật bởi quản trị viên";
+function reason(value: unknown, allowAutomatic = false): string {
   const result = String(value ?? "").trim();
+  if (!result && allowAutomatic) return ADMIN_REASON;
   assert(result.length >= 3, "Nhập lý do từ 3 ký tự");
   return result;
 }
@@ -63,10 +65,11 @@ export function executeCareCommand(s: AppState, command: Command, actor?: CareAc
   const p = command.payload ?? {};
   const now = actor?.now ?? new Date().toISOString();
   const today = businessDate(now);
+  const actionReason = (value: unknown) => reason(value, actor?.role === "admin");
   const log = (referenceId: string, details: string) => s.audit.push({ id: randomUUID(), at: now, type: command.type, referenceId, details: JSON.stringify({ actorId: actor?.id, reason: details }) });
   if (actor?.workspaceOwnerId && actor.workspaceOwnerId !== actor.id) {
     assert(actor.role === "admin", "Không được thay đổi dữ liệu nhân viên khác", "FORBIDDEN");
-    reason(p.reason);
+    actionReason(p.reason);
   }
   const writeAttendance = (date: string, nextStatus: AttendanceStatus, why: string) => {
     s.attendance ??= [];
@@ -84,7 +87,7 @@ export function executeCareCommand(s: AppState, command: Command, actor?: CareAc
     assert(date === today || actor?.role === "admin", "Ngày cũ cần gửi yêu cầu để quản trị duyệt", "FORBIDDEN");
     const old = s.attendance?.find(item => item.date === date);
     if (old?.status === nextStatus) return true;
-    const why = old || date < today ? reason(p.reason) : String(p.reason ?? "Điểm danh hôm nay");
+    const why = old || date < today ? actionReason(p.reason) : String(p.reason ?? "Điểm danh hôm nay");
     writeAttendance(date, nextStatus, why);
     log(date, why);
     return true;
@@ -95,7 +98,7 @@ export function executeCareCommand(s: AppState, command: Command, actor?: CareAc
     const date = day(p.date);
     const nextStatus = status(p.status);
     assert(date < today, "Yêu cầu bổ sung chỉ áp dụng cho ngày đã qua");
-    const why = reason(p.reason);
+    const why = actionReason(p.reason);
     const requests = s.attendanceRequests ??= [];
     assert(!requests.some(item => item.date === date && item.status === "pending"), "Ngày này đang có yêu cầu chờ duyệt", "CONFLICT");
     const before = s.attendance?.find(item => item.date === date);
@@ -108,7 +111,7 @@ export function executeCareCommand(s: AppState, command: Command, actor?: CareAc
   if (command.type === "withdrawAttendanceRequest" || command.type === "reviewAttendanceRequest") {
     const request = find(s.attendanceRequests ?? [], p.id);
     assert(request.status === "pending", "Yêu cầu đã được xử lý", "CONFLICT");
-    const why = reason(p.reason);
+    const why = actionReason(p.reason);
     if (command.type === "withdrawAttendanceRequest") {
       assert(actor?.id === request.requestedBy, "Chỉ người gửi được rút yêu cầu", "FORBIDDEN");
       request.status = "withdrawn";
@@ -152,14 +155,14 @@ export function executeCareCommand(s: AppState, command: Command, actor?: CareAc
     if (existing) Object.assign(existing, fields, { version: (existing.version ?? 1) + 1 });
     else (s.routeSchedules ??= []).push({ ...fields, id: scheduleId, status: "planned", createdAt: now, version: 1 });
     s.routeSchedules!.sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
-    log(scheduleId, String(p.reason ?? "Lưu lịch theo tuyến"));
+    log(scheduleId, actor?.role === "admin" ? actionReason(p.reason) : String(p.reason ?? "Lưu lịch theo tuyến"));
     return true;
   }
   const item = find(s.routeSchedules ?? [], p.id);
   assert(!item.deletedAt, "Lịch đã bị xóa", "CONFLICT");
   if (p.scheduleVersion !== undefined) assert(p.scheduleVersion === (item.version ?? 1), "Lịch đã thay đổi", "CONFLICT");
   if (command.type === "deleteRouteSchedule") {
-    const why = reason(p.reason);
+    const why = actionReason(p.reason);
     Object.assign(item, { deletedAt: now, deletedBy: actor?.id, deleteReason: why, updatedAt: now, version: (item.version ?? 1) + 1 });
     // Completed visits are historical facts; hiding their schedule never voids them.
     if (item.status !== "completed") item.status = "cancelled";
@@ -167,7 +170,7 @@ export function executeCareCommand(s: AppState, command: Command, actor?: CareAc
     return true;
   }
   const adjustment = command.type === "adjustRouteSchedule";
-  const why = adjustment ? reason(p.reason) : String(p.reason ?? "Hoàn thành lịch theo tuyến");
+  const why = adjustment ? actionReason(p.reason) : String(p.reason ?? "Hoàn thành lịch theo tuyến");
   const completedCustomerIds = ids(p.completedCustomerIds ?? item.customerIds);
   assert(completedCustomerIds.every(id => item.customerIds.includes(id)), "Khách hoàn thành không nằm trong lịch");
   const resultNotes = String(p.resultNotes ?? "").trim();

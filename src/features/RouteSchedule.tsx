@@ -85,7 +85,7 @@ export function RouteSchedulePage() {
 }
 
 function ScheduleModal({ action, schedule, initialDate, onClose }: { action: "save" | "complete" | "adjust" | "delete"; schedule: RouteSchedule | null; initialDate: string; onClose: () => void }) {
-  const { state, command, busy, notify, adminTarget, adminReason, setAdminReason } = useWorkspace();
+  const { state, user, command, busy, notify } = useWorkspace();
   const routes = state.catalogs?.routes || [];
   const [route, setRoute] = useState(schedule?.route || routes[0] || "");
   const [date, setDate] = useState(schedule?.date || initialDate);
@@ -112,7 +112,6 @@ function ScheduleModal({ action, schedule, initialDate, onClose }: { action: "sa
   const title = action === "save" ? schedule ? "Sửa lịch theo tuyến" : "Tạo lịch theo tuyến" : action === "delete" ? "Xóa lịch theo tuyến" : action === "adjust" ? "Điều chỉnh kết quả" : "Hoàn thành lịch theo tuyến";
   return <Modal title={title} onClose={() => { if (!busy) onClose(); }} wide><form className="form-stack" onSubmit={save}>
     {error && <Notice type="error">{error}</Notice>}
-    {adminTarget && <Field label="Lý do quản trị"><textarea value={adminReason} onChange={event => setAdminReason(event.target.value)} minLength={3} required /></Field>}
     {action === "save" && <><div className="form-grid"><Field label="Ngày thực hiện"><input type="date" value={date} onChange={event => setDate(event.target.value)} required /></Field><Field label="Bắt đầu"><input type="time" value={startTime} onChange={event => setStart(event.target.value)} required /></Field><Field label="Kết thúc"><input type="time" value={endTime} onChange={event => setEnd(event.target.value)} required /></Field><Field label="Tuyến"><select required value={route} onChange={event => { setRoute(event.target.value); setSelected(new Set()); }}><option value="">Chọn tuyến</option>{routes.map(value => <option key={value}>{value}</option>)}</select></Field></div>
       {overlap.length > 0 && <Notice type="warning">Khung giờ trùng {overlap.length} lịch khác trong ngày. Hãy đối chiếu trước khi lưu.</Notice>}
       <Field label="Ghi chú"><textarea name="notes" defaultValue={schedule?.notes} /></Field>
@@ -128,7 +127,7 @@ function ScheduleModal({ action, schedule, initialDate, onClose }: { action: "sa
       <div className="route-customer-picker">{(schedule?.customerIds || []).map(id => <label className="checkbox-row" key={id}><input type="checkbox" checked={selected.has(id)} onChange={() => toggle(id)} /><span>{state.customers.find(customer => customer.id === id)?.name || "Khách đã lưu trữ"}</span></label>)}</div>
       <Field label="Ghi chú kết quả"><textarea name="resultNotes" defaultValue={schedule?.resultNotes} /></Field></>}
     {action === "delete" && <Notice type="warning">Ẩn lịch {day(schedule!.date)} tuyến {schedule!.route}. Lượt chăm sóc đã ghi và báo cáo vẫn được giữ nguyên.</Notice>}
-    {(action === "delete" || action === "adjust") && <Field label="Lý do"><textarea value={reason} onChange={event => setReason(event.target.value)} minLength={3} required /></Field>}
-    <div className="modal-actions"><Button type="button" disabled={busy} onClick={onClose}>Hủy</Button><Button variant={action === "delete" ? "danger" : "primary"} busy={busy} disabled={(action === "delete" || action === "adjust") && reason.trim().length < 3}>{action === "save" ? "Lưu lịch" : action === "delete" ? "Ẩn lịch" : "Lưu kết quả"}</Button></div>
+    {(action === "delete" || action === "adjust") && user.role !== "admin" && <Field label="Lý do"><textarea value={reason} onChange={event => setReason(event.target.value)} minLength={3} required /></Field>}
+    <div className="modal-actions"><Button type="button" disabled={busy} onClick={onClose}>Hủy</Button><Button variant={action === "delete" ? "danger" : "primary"} busy={busy} disabled={user.role !== "admin" && (action === "delete" || action === "adjust") && reason.trim().length < 3}>{action === "save" ? "Lưu lịch" : action === "delete" ? "Ẩn lịch" : "Lưu kết quả"}</Button></div>
   </form></Modal>;
 }

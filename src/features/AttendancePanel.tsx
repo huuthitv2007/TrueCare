@@ -12,7 +12,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : "Kh
 
 /** Attendance controls use the report date; pending requests do not alter counted days. */
 export function AttendancePanel({ date }: { date: string }) {
-  const { state, user, command, busy, notify, adminTarget, adminReason, setAdminReason } = useWorkspace();
+  const { state, user, command, busy, notify, adminTarget } = useWorkspace();
   const [tab, setTab] = useState("personal");
   const [action, setAction] = useState<"record" | "request" | "withdraw" | null>(null);
   const [status, setStatus] = useState<AttendanceStatus>("worked");
@@ -40,10 +40,9 @@ export function AttendancePanel({ date }: { date: string }) {
         <form className="form-stack" onSubmit={save}>
           {error && <Notice type="error">{error}</Notice>}
           <Notice>{day(date)} · Hiện tại: {record ? labels[record.status] : "Chưa xác nhận"}{action === "request" ? ". Yêu cầu không cộng ngày công cho đến khi được duyệt." : ""}</Notice>
-          {adminTarget && <Field label="Lý do quản trị"><textarea value={adminReason} onChange={event => setAdminReason(event.target.value)} required minLength={3} /></Field>}
           {action !== "withdraw" && <Field label="Trạng thái muốn ghi nhận"><select value={status} onChange={event => setStatus(event.target.value as AttendanceStatus)}>{Object.entries(labels).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></Field>}
-          <Field label="Lý do"><textarea value={reason} onChange={event => setReason(event.target.value)} required minLength={3} /></Field>
-          <div className="modal-actions"><Button type="button" disabled={busy} onClick={() => setAction(null)}>Hủy</Button><Button variant="primary" busy={busy} disabled={reason.trim().length < 3}>{action === "request" ? "Gửi yêu cầu" : action === "withdraw" ? "Rút yêu cầu" : "Ghi nhận"}</Button></div>
+          {user.role !== "admin" && <Field label="Lý do"><textarea value={reason} onChange={event => setReason(event.target.value)} required minLength={3} /></Field>}
+          <div className="modal-actions"><Button type="button" disabled={busy} onClick={() => setAction(null)}>Hủy</Button><Button variant="primary" busy={busy} disabled={user.role !== "admin" && reason.trim().length < 3}>{action === "request" ? "Gửi yêu cầu" : action === "withdraw" ? "Rút yêu cầu" : "Ghi nhận"}</Button></div>
         </form>
       </Modal>}
     </>}
@@ -79,6 +78,6 @@ function AttendanceReview() {
     {result?.items.map(row => <article className="care-request" key={row.ownerId + row.id}><strong>{row.ownerName} · {day(row.date)}</strong><Badge>{requestLabels[row.status]}</Badge><p>{row.before ? labels[row.before.status] : "Chưa xác nhận"} → {labels[row.requestedStatus]}</p><p>{row.reason}</p>{row.reviewReason && <small>Phản hồi: {row.reviewReason}</small>}{row.status === "pending" && <div className="toolbar"><Button variant="primary" onClick={() => begin(row, "approved")}>Chấp thuận</Button><Button onClick={() => begin(row, "rejected")}>Từ chối</Button></div>}</article>)}
     {result && !result.items.length && <Empty title="Không có yêu cầu phù hợp" />}
     {result && result.pages > 1 && <div className="toolbar"><Button disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Trang trước</Button><span>Trang {page}/{result.pages} · {result.total} yêu cầu</span><Button disabled={page >= result.pages} onClick={() => setPage(value => value + 1)}>Trang sau</Button></div>}
-    {review && <Modal title={review.decision === "approved" ? "Chấp thuận bổ sung điểm danh" : "Từ chối yêu cầu điểm danh"} onClose={() => { if (!saving) setReview(null); }}><form className="form-stack" onSubmit={submit}>{modalError && <Notice type="error">{modalError}</Notice>}<Notice>{review.row.ownerName} · {day(review.row.date)} · {review.row.before ? labels[review.row.before.status] : "Chưa xác nhận"} → {labels[review.row.requestedStatus]}. {review.decision === "approved" ? "Ngày công sẽ được tính lại theo trạng thái mới." : "Ngày công hiện tại không thay đổi."}</Notice><Field label="Lý do duyệt/từ chối"><textarea required minLength={3} value={reason} onChange={event => { setReason(event.target.value); setOperationKey(crypto.randomUUID()); }} /></Field><div className="modal-actions"><Button type="button" disabled={saving} onClick={() => setReview(null)}>Hủy</Button><Button variant="primary" busy={saving} disabled={reason.trim().length < 3}>{review.decision === "approved" ? "Chấp thuận" : "Từ chối"}</Button></div></form></Modal>}
+    {review && <Modal title={review.decision === "approved" ? "Chấp thuận bổ sung điểm danh" : "Từ chối yêu cầu điểm danh"} onClose={() => { if (!saving) setReview(null); }}><form className="form-stack" onSubmit={submit}>{modalError && <Notice type="error">{modalError}</Notice>}<Notice>{review.row.ownerName} · {day(review.row.date)} · {review.row.before ? labels[review.row.before.status] : "Chưa xác nhận"} → {labels[review.row.requestedStatus]}. {review.decision === "approved" ? "Ngày công sẽ được tính lại theo trạng thái mới." : "Ngày công hiện tại không thay đổi."}</Notice><div className="modal-actions"><Button type="button" disabled={saving} onClick={() => setReview(null)}>Hủy</Button><Button variant="primary" busy={saving}>{review.decision === "approved" ? "Chấp thuận" : "Từ chối"}</Button></div></form></Modal>}
   </div>;
 }

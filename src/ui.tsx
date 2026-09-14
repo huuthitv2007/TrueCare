@@ -289,6 +289,7 @@ export function ConfirmActionModal({
   description,
   subject,
   confirmLabel = "Xóa",
+  requireReason = true,
   onClose,
   onConfirm,
 }: {
@@ -296,6 +297,7 @@ export function ConfirmActionModal({
   description: ReactNode;
   subject?: string;
   confirmLabel?: string;
+  requireReason?: boolean;
   onClose: () => void;
   onConfirm: (reason: string, requestId: string) => Promise<void>;
 }) {
@@ -307,7 +309,7 @@ export function ConfirmActionModal({
   const submit = async () => {
     if (submitting.current) return;
     const value = reason.trim();
-    if (value.length < 3) return setError("Nhập lý do có ít nhất 3 ký tự.");
+    if (requireReason && value.length < 3) return setError("Nhập lý do có ít nhất 3 ký tự.");
     submitting.current = true;
     setBusy(true);
     setError("");
@@ -333,7 +335,7 @@ export function ConfirmActionModal({
           </p>
         )}
         {error && <Notice type="error">{error}</Notice>}
-        <Field label="Lý do quản trị">
+        {requireReason && <Field label="Lý do quản trị">
           <textarea
             autoFocus
             value={reason}
@@ -341,7 +343,7 @@ export function ConfirmActionModal({
             minLength={3}
             required
           />
-        </Field>
+        </Field>}
         <div className="modal-actions">
           <Button type="button" onClick={onClose} disabled={busy}>
             Hủy

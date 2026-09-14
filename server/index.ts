@@ -286,8 +286,9 @@ for (const [path,resource] of [["route-schedules","routeSchedules"],["attendance
 app.get("/api/admin/workspaces/:userId", asyncRoute((req,res) => res.json({state:read(String(req.params.userId))})));
 app.post("/api/admin/workspaces/:userId/commands", asyncRoute((req,res) => {
   const owner = String(req.params.userId), actor = publicUser(res.locals.user);
-  assert(String(req.body.reason ?? "").trim().length >= 3,"Cần lý do quản trị");
-  const command = {...req.body.command,payload:{...req.body.command?.payload,reason:req.body.reason}};
+  const reason = String(req.body.reason ?? "").trim() || "Cập nhật bởi quản trị viên";
+  assert(reason.length <= 1000,"Lý do quản trị không được quá 1.000 ký tự");
+  const command = {...req.body.command,payload:{...req.body.command?.payload,reason}};
   assert(typeof command.idempotencyKey === "string" && command.idempotencyKey.length >= 8,"Cần khóa chống gửi lặp");
   const fingerprint=hash(JSON.stringify({type:command.type,payload:command.payload}));
   const result=transaction(() => {

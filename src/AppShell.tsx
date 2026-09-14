@@ -38,8 +38,6 @@ export function AppShell({
     busy,
     adminTarget,
     setAdminTarget,
-    adminReason,
-    setAdminReason,
   } = useWorkspace();
   const location = useLocation();
   const [mobile, setMobile] = useState(
@@ -310,16 +308,9 @@ export function AppShell({
                   Đang quản trị dữ liệu: {adminTarget.displayName} (@
                   {adminTarget.username})
                 </strong>
-                <input
-                  aria-label="Lý do thao tác trong không gian nhân viên"
-                  value={adminReason}
-                  onChange={(e) => setAdminReason(e.target.value)}
-                  placeholder="Lý do thao tác quản trị (bắt buộc khi lưu)"
-                />
                 <button
                   onClick={() => {
                     setAdminTarget(null);
-                    setAdminReason("");
                   }}
                 >
                   Thoát chế độ quản trị

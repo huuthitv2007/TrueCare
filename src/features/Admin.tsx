@@ -27,7 +27,8 @@ const sections = [
   ["imports", "Nhập dữ liệu", FileClock], ["audit", "Nhật ký", ScrollText],
   ["system", "Cài đặt hệ thống", Settings],
 ] as const;
-function requireReason(reason: string) { if (reason.trim().length < 3) throw new Error("Nhập lý do quản trị từ 3 ký tự trước khi lưu"); return reason.trim(); }
+const automaticReason = "Cập nhật bởi quản trị viên";
+function requireReason(reason: string) { return reason.trim() || automaticReason; }
 
 type BulkResource = "customers" | "orders" | "products" | "users" | "inventory" | "funds" | "programs" | "imports" | "audit";
 type BulkAction = "trash" | "restore" | "purge";
@@ -84,7 +85,7 @@ function useBulkActions(resource: BulkResource, rows: BulkRef[], _reason: string
       </div>
     </div>
     {result?.skippedCount ? <Notice type="error"><strong>{result.skippedCount} dòng chưa xử lý:</strong><ul>{result.results.filter(item => item.status === 'skipped').map(item => <li key={`${item.ownerId}:${item.id}`}>{rows.find(row => row.id === item.id && row.ownerId === item.ownerId)?.label ?? item.id}: {item.message}</li>)}</ul></Notice> : null}
-    {pending && <ConfirmActionModal title={`${label(pending.action)} ${pending.rows.length} dòng`} confirmLabel={label(pending.action)}
+    {pending && <ConfirmActionModal title={`${label(pending.action)} ${pending.rows.length} dòng`} confirmLabel={label(pending.action)} requireReason={false}
       description={<>{pending.action === 'purge' ? 'Xóa vĩnh viễn không thể khôi phục; dữ liệu có lịch sử liên quan sẽ bị chặn.' : effects}<ul className="bulk-preview">{pending.rows.map(row => <li key={row.key}>{row.label}</li>)}</ul></>}
       onClose={() => setPending(null)} onConfirm={async(reason, requestId) => {
         const response = await request<BulkResponse>(`/api/admin/${resource}/bulk-actions`, { action: pending.action,
@@ -132,15 +133,14 @@ const archiveRef = (row:any):BulkRef => ({key:`${row.ownerId ?? ''}:${row.id}`,i
 
 export function AdminConsole() {
   const location = useLocation(), navigate = useNavigate();
-  const { adminReason, setAdminReason, notify } = useWorkspace();
+  const { notify } = useWorkspace();
   const section = location.pathname.split("/")[2] || "overview";
   const [members, setMembers] = useState<TeamMember[]>([]);
   const reloadMembers = async () => setMembers((await request<{ members: TeamMember[] }>("/api/admin/team")).members);
   useEffect(() => { void reloadMembers().catch((error) => notify((error as Error).message)); }, []);
-  const props = { reason: adminReason, members, reloadMembers };
+  const props = { reason: automaticReason, members, reloadMembers };
   return <>
     <Heading eyebrow="ADMIN CONSOLE" title="Quản trị TrueCare" description="Theo dõi và xử lý dữ liệu toàn hệ thống tại một nơi." />
-    <Card className="admin-reason-card"><Field label="Lý do thao tác quản trị"><input value={adminReason} onChange={(e) => setAdminReason(e.target.value)} placeholder="Bắt buộc khi sửa, xoá, gộp hoặc điều chỉnh số liệu" /></Field><small>Lý do được lưu cùng người thao tác, thời điểm và dữ liệu trước/sau.</small></Card>
     <nav className="admin-nav" aria-label="Chức năng quản trị">{sections.map(([key, label, Icon]) => <button key={key} className={section === key ? "active" : ""} onClick={() => navigate(`/admin/${key}`)}><Icon size={17}/>{label}</button>)}</nav>
     {section === "overview" && <Overview {...props}/>} {section === "customers" && <CustomersAdmin {...props}/>} {section === "orders" && <OrdersAdmin {...props}/>} {section === "products" && <ProductsAdmin {...props}/>} {section === "inventory" && <InventoryAdmin {...props}/>} {section === "funds" && <FundsAdmin {...props}/>} {section === "employees" && <EmployeesAdmin {...props}/>} {section === "catalogs" && <CatalogsAdmin {...props}/>} {section === "imports" && <ImportsAdmin {...props}/>} {section === "audit" && <AuditAdmin {...props}/>} {section === "system" && <SystemAdmin {...props}/>}
   </>;
@@ -306,7 +306,7 @@ function CatalogsAdmin({ reason }: AdminProps) {
     <div className="toolbar"><Field label="Loại danh mục"><select value={kind} onChange={(event) => setKind(event.target.value)}>{Object.entries(labels).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></Field><Button disabled={kind==='visitDays'} onClick={() => setValues((current) => [...current, `Mục mới ${current.length + 1}`])}><Plus size={15}/>Thêm mục</Button></div>
     <div className="catalog-editor">{values.map((value,index) => <div className="catalog-row" key={`${value}:${index}`}><span className="catalog-position">{index + 1}</span><strong>{value}</strong><Badge tone={usageOf(value) ? "blue" : "muted"}>{usageOf(value)} nơi dùng</Badge><Button aria-label={`Đưa ${value} lên`} disabled={kind==="visitDays"||index===0} onClick={() => move(index,-1)}><ArrowUp size={14}/></Button><Button aria-label={`Đưa ${value} xuống`} disabled={kind==="visitDays"||index===values.length-1} onClick={() => move(index,1)}><ArrowDown size={14}/></Button><label className="checkbox-row"><input type="checkbox" aria-label={`Sử dụng ${value}`} disabled={kind==='visitDays'} checked={entryStatus[value]!==false} onChange={event=>setEntryStatus(current=>({...current,[value]:event.target.checked}))}/>Đang dùng</label><Button disabled={kind==='visitDays'} onClick={() => setRenaming(value)}><Pencil size={14}/>Đổi tên</Button><Button variant="danger" disabled={kind==='visitDays'||usageOf(value)>0} title={kind==='visitDays'?"Danh mục cố định":usageOf(value)>0?"Mục đang được sử dụng":""} onClick={() => setDeleting(value)}><Trash2 size={14}/>Xóa</Button></div>)}</div>
     <div className="modal-actions"><Button variant="primary" onClick={() => void save()}>Lưu danh mục</Button></div>
-  </Card>{deleting!==null&&<ConfirmActionModal title="Xóa mục danh mục" subject={deleting} confirmLabel="Xóa mục" description="Xóa và lưu ngay mục này. Các thay đổi danh mục chưa lưu khác được giữ trong form." onClose={()=>setDeleting(null)} onConfirm={async(reason,key)=>{
+  </Card>{deleting!==null&&<ConfirmActionModal title="Xóa mục danh mục" subject={deleting} confirmLabel="Xóa mục" requireReason={false} description="Xóa và lưu ngay mục này. Các thay đổi danh mục chưa lưu khác được giữ trong form." onClose={()=>setDeleting(null)} onConfirm={async(reason,key)=>{
       const value=deleting;
       if((data.catalogs[kind]??[]).includes(value)) {
         const result=await request(`/api/admin/catalogs/${kind}/entries`,{value,reason,idempotencyKey:key},'DELETE');

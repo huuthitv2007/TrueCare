@@ -455,6 +455,7 @@ export function Customers() {
           title="Xóa khách hàng"
           subject={deleting.name}
           description="Khách hàng sẽ được chuyển vào Thùng rác. Toa và lịch sử ghé cũ được giữ nguyên."
+          requireReason={user.role !== "admin"}
           onClose={() => setDeleting(null)}
           onConfirm={async (reason, requestId) => {
             await trashOne('customers', deleting.id, reason, requestId);
@@ -679,9 +680,6 @@ export function Products() {
               Để trống giá chưa biết; hệ thống sẽ yêu cầu đối chiếu trước khi
               chốt. Can và túi là hai sản phẩm khác nhau.
             </Notice>
-            <Field label="Lý do quản trị">
-              <textarea name="reason" required />
-            </Field>
             <label className="checkbox-field">
               <input
                 type="checkbox"
@@ -706,6 +704,7 @@ export function Products() {
           title="Xóa sản phẩm"
           subject={`${deleting.code} · ${deleting.name}`}
           description="Sản phẩm sẽ được chuyển vào Thùng rác và không còn xuất hiện khi lập toa mới. Lịch sử giá và toa cũ được giữ nguyên."
+          requireReason={user.role !== "admin"}
           onClose={() => setDeleting(null)}
           onConfirm={async (reason, requestId) => {
             await trashOne('products', deleting.id, reason, requestId);

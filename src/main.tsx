@@ -76,6 +76,7 @@ const RouteSchedulePage = lazy(() =>
 );
 
 const client = new QueryClient();
+const DEFAULT_ADMIN_REASON = "Cập nhật bởi quản trị viên";
 
 function Application() {
   const [session, setSession] = useState<User | null | undefined>(undefined);
@@ -97,7 +98,6 @@ function Application() {
     setLoadError("");
     updateAdminTarget(target);
   };
-  const [adminReason, setAdminReason] = useState("");
   const refresh = async () => {
     const generation = workspaceGeneration.current;
     const sequence = ++refreshSequence.current;
@@ -157,7 +157,7 @@ function Application() {
     setBusy(true);
     try {
       let next: AppState;
-      const fingerprint = JSON.stringify([adminTarget?.id ?? session?.id, type, payload, adminTarget ? adminReason : ""]);
+      const fingerprint = JSON.stringify([adminTarget?.id ?? session?.id, type, payload]);
       const operation = pendingCommand.current?.fingerprint === fingerprint ? pendingCommand.current.operation : {
         type,
         payload,
@@ -168,13 +168,9 @@ function Application() {
       };
       pendingCommand.current = { fingerprint, operation };
       if (adminTarget) {
-        if (adminReason.trim().length < 3)
-          throw new Error(
-            "Nhập lý do quản trị trước khi sửa dữ liệu nhân viên",
-          );
         next = await request<AppState>(
           `/api/admin/workspaces/${adminTarget.id}/commands`,
-          { command: operation, reason: adminReason },
+          { command: operation, reason: DEFAULT_ADMIN_REASON },
         );
       } else next = await request<AppState>("/api/commands", operation);
       if (generation === workspaceGeneration.current) setState(next);
@@ -254,8 +250,6 @@ function Application() {
         busy,
         adminTarget,
         setAdminTarget,
-        adminReason,
-        setAdminReason,
       }}
     >
       <Workspace

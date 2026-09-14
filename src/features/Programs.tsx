@@ -6,7 +6,7 @@ import { Button, Card, Empty, Field, Heading, Modal, Notice, Status, money, toda
 import type { Program } from "../../shared/types";
 
 export function Programs() {
-  const { state, command, busy, user, adminTarget, adminReason, setAdminReason } = useWorkspace();
+  const { state, command, busy, user, adminTarget } = useWorkspace();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("active");
@@ -89,7 +89,6 @@ export function Programs() {
         <label className="checkbox-field"><input type="checkbox" checked={allow} onChange={e => setAllow(e.target.checked)} />Cho phép dùng quỹ đã giao nếu cần bù</label>
         {estimate && lines.length > 0 && <Notice>Giá trị mỗi suất: {money(estimate.price.toString())} · Cần bù: {money(estimate.subsidy.toString())} · Ngân sách sẽ giữ: {money(estimate.held.toString())}. Quỹ khả dụng: {money(state.summary.available)}.</Notice>}
         <Notice>Mỗi suất được hỗ trợ tối đa 200.000đ. Khi lưu kiểm tra bảng giá và quỹ; khi dùng suất kiểm tra thêm tồn kho.</Notice>
-        {adminTarget && <Field label="Lý do quản trị"><textarea value={adminReason} onChange={event => setAdminReason(event.target.value)} minLength={3} required /></Field>}
         <Button variant="primary" busy={busy} disabled={!lines.length || !estimate || !Number.isSafeInteger(count) || count < 1 || !name.trim() || expires < today()} onClick={() => void save()}>Lưu & giữ ngân sách</Button>
       </div></Card>
       <Card title="Chương trình đã lưu">
@@ -106,7 +105,6 @@ export function Programs() {
         <Field label="Khách hàng nhận suất"><select value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">Chọn khách</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
         <Field label="Số suất sử dụng"><input type="number" min="1" max={applying.remaining} value={useCount} onChange={e => setUseCount(Number(e.target.value))} /></Field>
         <p>Tổng giá trị: {money(new Decimal(applying.price).times(Number.isFinite(useCount) ? useCount : 0).toString())} · Còn lại sau sử dụng: {applying.remaining - useCount} suất.</p>
-        {adminTarget && <Field label="Lý do quản trị"><textarea value={adminReason} onChange={event => setAdminReason(event.target.value)} minLength={3} required /></Field>}
         <div className="modal-actions"><Button disabled={busy} onClick={() => setApplying(null)}>Hủy</Button><Button variant="primary" busy={busy} disabled={!customerId || !Number.isSafeInteger(useCount) || useCount < 1 || useCount > applying.remaining} onClick={() => void apply()}>Xác nhận tạo toa</Button></div>
       </div>
     </Modal>}

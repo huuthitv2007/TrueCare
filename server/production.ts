@@ -222,13 +222,14 @@ const logAdmin = async (
   if (error)
     throw new DomainError("STORAGE", "Không thể ghi nhật ký quản trị", 503);
 };
+const DEFAULT_ADMIN_REASON = "Cập nhật bởi quản trị viên";
 const reasonOf = (value: unknown) => {
   const reason = String(value ?? "").trim();
   assert(
-    reason.length >= 3 && reason.length <= 1000,
-    "Cần lý do thao tác từ 3 đến 1.000 ký tự",
+    reason.length <= 1000,
+    "Lý do thao tác không được quá 1.000 ký tự",
   );
-  return reason;
+  return reason || DEFAULT_ADMIN_REASON;
 };
 const employeeAccount = (row: AccountRow): EmployeeAccount => ({
   id: row.user_id,

@@ -112,9 +112,10 @@ test("read review flags preserve anomalous attendance and resolve only exact leg
   assert.equal(s.routeSchedules[1].routeId, undefined);
   assert.equal(s.routeSchedules[1].needsReview, true);
 });
-test("cross-workspace mutations need server actor ownership plus admin reason", () => {
+test("cross-workspace mutations require an admin and automatically audit an omitted admin reason", () => {
   const s = fixture();
   assert.throws(() => run(s, "saveRouteSchedule", schedule, { ...actor, workspaceOwnerId: "employee-b" }), /nhân viên khác/);
-  assert.throws(() => run(s, "saveRouteSchedule", schedule, { ...admin, workspaceOwnerId: "employee-b" }), /lý do/);
-  assert.equal(run(s, "saveRouteSchedule", { ...schedule, reason: "Phân công tuyến" }, { ...admin, workspaceOwnerId: "employee-b" }).routeSchedules!.length, 1);
+  const updated = run(s, "saveRouteSchedule", schedule, { ...admin, workspaceOwnerId: "employee-b" });
+  assert.equal(updated.routeSchedules!.length, 1);
+  assert.match(updated.audit.at(-1)!.details, /Cập nhật bởi quản trị viên/);
 });
