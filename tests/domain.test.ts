@@ -262,14 +262,18 @@ describe("Quỹ thực giao và giữ ngân sách", () => {
   it("chương trình thông minh dùng giá trần nguồn, preview không giữ quỹ và token không nhận dòng giá từ client", () => {
     let s = emptyState("Quản trị viên");
     s = run(s, "saveProduct", { name: "Túi NGX 4.2KG Care", code: "NGX-4.2-TUI", variant: "Majestic đỏ", pack: 4, unit: "túi", cost: "141000", price: "160000" });
+    s = run(s, "saveProduct", { name: "Túi NXV 1.15 Lít", code: "NXV-1.15", variant: "Elizabeth tím", pack: 10, unit: "túi", cost: "70000", price: "77000" });
     s = run(s, "saveProduct", { name: "Túi NGX Care 4.2kg (màu chưa ghi, kỳ 07-13/09)", code: "TC-HIST-NGX42", variant: "Chưa ghi màu", pack: 4, unit: "túi", cost: "140720", price: "151000" });
     s = run(s, "saveCustomer", { name: "Khách chương trình" });
     s = run(s, "openingBalance", { amount: "1000000", notes: "Quỹ mẫu" });
     const before = s.summary.reserved;
     const preview = previewSmartPrograms(s, { count: 2, expiresAt: "2099-01-01" });
-    const selected = preview.options.find((option) => option.id === "plastic-small")!;
-    assert.equal(selected.lines.find((line) => line.kind === "sale")?.price, "151000");
-    assert.equal(preview.options.flatMap((option) => option.lines).some((line) => line.productId === s.products[1].id), false);
+    const selected = preview.options.find((option) => option.gift?.id === "plastic-small")!;
+    const sales = selected.lines.filter((line) => line.kind === "sale");
+    assert.equal(sales.find((line) => selected.lineRoles[line.id] === "focus")?.price, "151000");
+    assert.equal(sales.length, 2);
+    assert.ok(sales.some((line) => selected.lineRoles[line.id] === "compensation"));
+    assert.equal(preview.options.flatMap((option) => option.lines).some((line) => line.productId === s.products[2].id), false);
     assert.equal(s.summary.reserved, before);
     s = execute(s, { type: "reserveSmartProgram", payload: { token: selected.token, reason: "Lưu phương án thông minh" }, version: s.version, idempotencyKey: crypto.randomUUID() }, { id: "admin", role: "admin" });
     assert.equal(s.programs.length, 1);
@@ -280,17 +284,49 @@ describe("Quỹ thực giao và giữ ngân sách", () => {
   it("tặng phẩm chuẩn trừ quỹ khi giao nhưng không cộng KPI, còn nhân viên không thể lưu phương án", () => {
     let s = emptyState("Quản trị viên");
     s = run(s, "saveProduct", { name: "Túi NGX 4.2KG Care", code: "NGX-4.2-TUI", pack: 4, unit: "túi", cost: "141000", price: "151000" });
+    s = run(s, "saveProduct", { name: "Túi NXV 1.15 Lít", code: "NXV-1.15", pack: 10, unit: "túi", cost: "70000", price: "77000" });
     s = run(s, "saveCustomer", { name: "Khách chương trình" });
     s = run(s, "openingBalance", { amount: "1000000", notes: "Quỹ mẫu" });
     const preview = previewSmartPrograms(s, { count: 1, expiresAt: "2099-01-01" });
-    const selected = preview.options.find((option) => option.id === "plastic-small")!;
+    const selected = preview.options.find((option) => option.gift?.id === "plastic-small")!;
     assert.throws(() => execute(s, { type: "reserveSmartProgram", payload: { token: selected.token, reason: "Lưu phương án" }, version: s.version, idempotencyKey: crypto.randomUUID() }, { id: "employee", role: "employee" }), /quản trị viên/);
     s = execute(s, { type: "reserveSmartProgram", payload: { token: selected.token, reason: "Lưu phương án" }, version: s.version, idempotencyKey: crypto.randomUUID() }, { id: "admin", role: "admin" });
     s = run(s, "applyProgram", { id: s.programs[0].id, customerId: s.customers[0].id, count: 1 });
     const order = s.orders[0];
     s = run(s, "recordDelivery", { orderId: order.id, lines: order.lines.map((line) => ({ lineId: line.id, quantity: line.quantity })) });
-    assert.equal(s.summary.delivered, "564000");
-    assert.equal(s.summary.fund, "1025000");
+    const deliveredKpi = order.lines.filter((line) => line.kind === "sale").reduce((sum, line) => sum + Number(line.cost) * line.quantity, 0);
+    assert.equal(s.summary.delivered, String(deliveredKpi));
+    assert.equal(s.summary.fund, String(1000000 + Number(order.margin)));
+  });
+  it("chương trình thông minh bắt buộc 1 thùng NHTT và hàng bù khác SKU, không dùng quỹ", () => {
+    let s = emptyState("Quản trị viên");
+    s.settings.focusProduct = "NGX túi 4,2kg";
+    s = run(s, "saveProduct", { name: "Túi NGX 4.2KG Care", code: "NGX-4.2-TUI", pack: 4, unit: "túi", cost: "1000", price: "151000" });
+    s = run(s, "saveProduct", { name: "Túi NXV 1.15 Lít", code: "NXV-1.15", pack: 10, unit: "túi", cost: "70000", price: "77000" });
+    s = run(s, "saveProduct", { name: "Nước rửa chén NRC 750g", code: "NRC-750", pack: 24, unit: "chai", cost: "20000", price: "24500" });
+    const preview = previewSmartPrograms(s, { count: 1, expiresAt: "2099-01-01" });
+    assert.ok(preview.options.length > 0);
+    for (const option of preview.options) {
+      const sales = option.lines.filter((line) => line.kind === "sale");
+      assert.ok(sales.length >= 2);
+      assert.equal(sales.filter((line) => option.lineRoles[line.id] === "focus").length, 1);
+      assert.ok(sales.some((line) => option.lineRoles[line.id] === "compensation"));
+      assert.equal(option.subsidy, "0");
+      assert.ok(Number(option.margin) >= 0);
+      assert.ok(new Set(sales.map((line) => line.productId)).size >= 2);
+    }
+    const shelf = preview.options.find((option) => option.gift?.id === "shelf-4-tier");
+    assert.ok(shelf);
+    assert.equal(shelf.cases, 5);
+    assert.equal(shelf.skuCount, 3);
+  });
+  it("chương trình thông minh giải thích khi NHTT không khớp catalog", () => {
+    let s = emptyState("Quản trị viên");
+    s.settings.focusProduct = "Sản phẩm không tồn tại";
+    s = run(s, "saveProduct", { name: "Túi NXV 1.15 Lít", code: "NXV-1.15", pack: 10, unit: "túi", cost: "70000", price: "77000" });
+    const preview = previewSmartPrograms(s, { count: 1, expiresAt: "2099-01-01" });
+    assert.equal(preview.options.length, 0);
+    assert.ok(preview.reasons.some((reason) => reason.includes("Nhãn hàng trọng tâm")));
   });
   it("lịch theo tuyến gợi ý khách, hoàn thành ghi lượt chăm sóc và xóa mềm", () => {
     let s = emptyState("Nhân viên tuyến");

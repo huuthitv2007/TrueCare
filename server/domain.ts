@@ -1159,7 +1159,7 @@ export function execute(
       assert(proposal.inventoryVersion === state.inventoryVersion, "Kho đã thay đổi. Hãy xem trước lại.", "CONFLICT");
       assert(validDate(proposal.expiresAt) >= date(), "Ngày hết hạn phải từ hôm nay");
       const count = positiveQuantity(proposal.count);
-      const rechecked = smartProgramPreview(s.products, s.summary.available);
+      const rechecked = smartProgramPreview(s.products, s.summary.available, s.settings.focusProduct);
       const option = rechecked.options.find((item) => item.id === proposal.option.id);
       assert(option, "Phương án không còn hợp lệ theo bảng giá hoặc quỹ hiện tại", "CONFLICT");
       assert(JSON.stringify(option.lines) === JSON.stringify(proposal.option.lines), "Bảng giá hoặc chi phí phương án đã thay đổi. Hãy xem trước lại.", "CONFLICT");
@@ -1176,7 +1176,9 @@ export function execute(
         status: "active", expiresAt: proposal.expiresAt, seed: 0,
         smart: { algorithmVersion: SMART_PRICEBOOK.algorithmVersion, pricebookId: SMART_PRICEBOOK.id,
           pricebookHash: SMART_PRICEBOOK.sourceHash, giftId: option.gift?.id, giftValue: option.gift?.value,
-          cases: option.cases, createdFromSignedPreview: true },
+          cases: option.cases, focusProductIds: option.lines.filter((line) => option.lineRoles[line.id] === "focus").map((line) => line.productId),
+          compensationProductIds: option.lines.filter((line) => option.lineRoles[line.id] === "compensation").map((line) => line.productId),
+          createdFromSignedPreview: true },
       });
       break;
     }
@@ -1414,7 +1416,7 @@ export function previewSmartPrograms(s: AppState, p: any) {
   const expiresAt = validDate(p?.expiresAt ?? date());
   assert(expiresAt >= date(), "Ngày hết hạn phải từ hôm nay");
   refresh(s);
-  const raw = smartProgramPreview(s.products, s.summary.available);
+  const raw = smartProgramPreview(s.products, s.summary.available, s.settings.focusProduct);
   const preview = {
     ...raw,
     options: raw.options.filter((option) => D(option.subsidy).times(count).lte(s.summary.available)),

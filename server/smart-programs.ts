@@ -12,7 +12,7 @@ export const SMART_PRICEBOOK = {
   effectiveDate: "2026-06-10",
   sourceName: "gia_ban_chao_khach.jpg",
   sourceHash: "13cb4cb1a063786ee9d8f2a80d8c32cd29d6131dba7b1bcbd58a17d2f0318980",
-  algorithmVersion: "smart-program-v1",
+  algorithmVersion: "smart-program-v2",
 } as const;
 
 export const STANDARD_GIFTS = [
@@ -36,6 +36,10 @@ export type SmartProgramOption = {
   cases: number;
   skuCount: number;
   variantCount: number;
+  /** Role of each signed preview line. Kept out of persisted OrderLine data. */
+  lineRoles: Record<string, "focus" | "compensation" | "gift">;
+  focusProductName: string;
+  compensationProductNames: string[];
   pricebook: typeof SMART_PRICEBOOK;
 };
 
@@ -76,9 +80,18 @@ export function priceCapOf(product: Product): string | null {
 }
 
 const money = (value: Decimal.Value) => new Decimal(value).toDecimalPlaces(0).toFixed(0);
-const maxSubsidy = new Decimal(200000);
+const maxAlternativesPerGift = 3;
 
-function candidateProducts(products: Product[]) {
+type Candidate = {
+  product: Product;
+  price: Decimal;
+  margin: Decimal;
+  caseMargin: Decimal;
+  casePrice: Decimal;
+  family: string;
+};
+
+function candidateProducts(products: Product[]): Candidate[] {
   return products.flatMap((product) => {
     const cardCap = priceCapOf(product);
     if (product.archived || product.deletedAt) return [];
@@ -89,8 +102,23 @@ function candidateProducts(products: Product[]) {
     if (!cardCap) return [];
     const price = Decimal.min(new Decimal(cardCap), new Decimal(product.price));
     if (price.lte(0)) return [];
-    return [{ product, price, margin: price.minus(product.cost) }];
-  }).sort((a, b) => b.margin.cmp(a.margin) || a.price.cmp(b.price) || a.product.id.localeCompare(b.product.id));
+    const margin = price.minus(product.cost);
+    return [{
+      product,
+      price,
+      margin,
+      caseMargin: margin.times(product.pack),
+      casePrice: price.times(product.pack),
+      family: normalize([product.name, product.unit, product.pack].join(" ")),
+    }];
+  }).sort((a, b) => a.caseMargin.cmp(b.caseMargin) || a.casePrice.cmp(b.casePrice) || a.product.id.localeCompare(b.product.id));
+}
+
+function matchesFocus(candidate: Candidate, focusProduct: string) {
+  const focusTokens = normalize(focusProduct).split(" ").filter((token) => token.length > 0);
+  if (!focusTokens.length) return false;
+  const productTokens = new Set(textOf(candidate.product).split(" "));
+  return focusTokens.every((token) => productTokens.has(token));
 }
 
 function lineOf(product: Product, price: Decimal, quantity: number): OrderLine {
@@ -135,55 +163,93 @@ function virtualGift(gift: SmartGift): OrderLine {
   };
 }
 
-function makeOption(products: Product[], gift?: SmartGift): SmartProgramOption | null {
-  const candidates = candidateProducts(products);
-  if (!candidates.length) return null;
-  const needCases = gift?.minimumCases ?? 1;
-  const diversity = gift?.id === "shelf-4-tier";
-  const types = diversity ? candidates.slice(0, 3) : candidates.slice(0, 1);
-  if (diversity && types.length < 3) return null;
-  const lines: OrderLine[] = [];
-  let remainingCases = needCases;
-  for (let index = 0; index < types.length; index++) {
-    const item = types[index];
-    const cases = index === types.length - 1 ? remainingCases : 1;
-    remainingCases -= cases;
-    lines.push(lineOf(item.product, item.price, item.product.pack * cases));
-  }
+function optionOf(focus: Candidate, compensation: Array<{ candidate: Candidate; cases: number }>, gift?: SmartGift): SmartProgramOption | null {
+  const saleLines = [
+    { candidate: focus, cases: 1, role: "focus" as const },
+    ...compensation.map(({ candidate, cases }) => ({ candidate, cases, role: "compensation" as const })),
+  ];
+  const distinctFamilies = new Set(saleLines.map((item) => item.candidate.family));
+  if (distinctFamilies.size !== saleLines.length) return null;
+  const saleMargin = saleLines.reduce((total, item) => total.plus(item.candidate.caseMargin.times(item.cases)), new Decimal(0));
+  const margin = saleMargin.minus(gift?.value ?? 0);
+  // Smart v2 does not consume the employee fund: compensation has to settle a
+  // discounted focus product and an optional gift inside the same bundle.
+  if (margin.lt(0)) return null;
+  const lines = saleLines.map((item) => lineOf(item.candidate.product, item.candidate.price, item.candidate.product.pack * item.cases));
   if (gift) lines.push(virtualGift(gift));
-  const sales = lines.filter((line) => line.kind === "sale");
-  const price = sales.reduce((total, line) => total.plus(new Decimal(line.price).times(line.quantity)), new Decimal(0));
-  const margin = lines.reduce((total, line) => total.plus(line.kind === "sale" ? new Decimal(line.price).minus(line.cost ?? 0).times(line.quantity) : new Decimal(line.cost ?? 0).neg()), new Decimal(0));
-  const subsidy = Decimal.max(0, margin.neg());
-  const cases = sales.reduce((total, line) => total + Math.ceil(line.quantity / line.pack), 0);
-  const variants = new Set(sales.map((line) => normalize(products.find((p) => p.id === line.productId)?.variant || line.name)).filter(Boolean));
-  if (subsidy.gt(maxSubsidy)) return null;
+  const price = saleLines.reduce((total, item) => total.plus(item.candidate.casePrice.times(item.cases)), new Decimal(0));
+  const cases = saleLines.reduce((total, item) => total + item.cases, 0);
+  if (gift?.id === "shelf-4-tier" && (cases < 5 || compensation.length < 2)) return null;
+  const variants = new Set(saleLines.map((item) => normalize(item.candidate.product.variant)).filter(Boolean));
+  const composition = saleLines.map((item) => `${item.candidate.product.id}:${item.cases}`).join("+");
   return {
-    id: gift?.id ?? "no-gift",
-    label: gift ? `Tặng ${gift.name}` : "Không tặng phẩm",
+    id: `${gift?.id ?? "no-gift"}:${composition}`,
+    label: gift ? `NHTT + hàng bù · Tặng ${gift.name}` : "NHTT + hàng bù",
     gift,
     lines,
     price: money(price),
     margin: money(margin),
-    subsidy: money(subsidy),
+    subsidy: "0",
     cases,
-    skuCount: sales.length,
+    skuCount: saleLines.length,
     variantCount: variants.size,
+    lineRoles: Object.fromEntries(lines.map((line, index) => [line.id, line.kind === "gift" ? "gift" : saleLines[index].role])),
+    focusProductName: focus.product.name,
+    compensationProductNames: compensation.map((item) => item.candidate.product.name),
     pricebook: SMART_PRICEBOOK,
   };
 }
 
-export function smartProgramPreview(products: Product[], available: Decimal.Value) {
-  const options = [undefined, ...STANDARD_GIFTS].map((gift) => makeOption(products, gift)).filter((option): option is SmartProgramOption => !!option);
+function optionsForGift(focuses: Candidate[], candidates: Candidate[], gift?: SmartGift) {
+  const options: SmartProgramOption[] = [];
+  for (const focus of focuses) {
+    const support = candidates.filter((candidate) => candidate.family !== focus.family && candidate.caseMargin.gt(0));
+    if (gift?.id === "shelf-4-tier") {
+      for (let left = 1; left <= 3; left++) for (const first of support) for (const second of support) {
+        if (first.family === second.family) continue;
+        const option = optionOf(focus, [{ candidate: first, cases: left }, { candidate: second, cases: 4 - left }], gift);
+        if (option) options.push(option);
+      }
+      continue;
+    }
+    const oneSupport = support.map((candidate) => optionOf(focus, [{ candidate, cases: 1 }], gift)).filter((option): option is SmartProgramOption => !!option);
+    if (oneSupport.length) { options.push(...oneSupport); continue; }
+    for (const first of support) for (const second of support) {
+      if (first.family === second.family) continue;
+      const option = optionOf(focus, [{ candidate: first, cases: 1 }, { candidate: second, cases: 1 }], gift);
+      if (option) options.push(option);
+    }
+  }
+  const unique = new Map(options.map((option) => [option.id, option]));
+  return [...unique.values()].sort(compareOptions).slice(0, maxAlternativesPerGift);
+}
+
+function compareOptions(a: SmartProgramOption, b: SmartProgramOption) {
+  return new Decimal(a.subsidy).cmp(b.subsidy)
+    || a.cases - b.cases
+    || new Decimal(a.margin).cmp(b.margin)
+    || new Decimal(a.price).cmp(b.price)
+    || b.variantCount - a.variantCount
+    || b.skuCount - a.skuCount
+    || a.id.localeCompare(b.id);
+}
+
+export function smartProgramPreview(products: Product[], _available: Decimal.Value, focusProduct = "") {
+  const candidates = candidateProducts(products);
+  const focuses = candidates.filter((candidate) => matchesFocus(candidate, focusProduct));
   const reasons: string[] = [];
-  const eligible = candidateProducts(products);
-  if (!eligible.length) reasons.push("Không có sản phẩm khớp bảng giá chương trình, đủ giá vốn và giá chào.");
-  if (!options.some((option) => option.id === "shelf-4-tier")) reasons.push("Kệ sắt 4 tầng chưa có phương án hợp lệ: cần tối thiểu 5 thùng, 3 SKU và mức bù không quá 200.000đ mỗi suất.");
-  const allowed = options.filter((option) => new Decimal(option.subsidy).lte(available));
-  if (!allowed.length && options.length) reasons.push("Quỹ khả dụng không đủ cho bất kỳ phương án hiện tại.");
+  if (!candidates.length) reasons.push("Không có sản phẩm khớp bảng giá chương trình, đủ giá vốn và giá chào.");
+  if (!String(focusProduct).trim()) reasons.push("Chưa cấu hình Nhãn hàng trọng tâm trong Cài đặt.");
+  else if (!focuses.length) reasons.push(`Nhãn hàng trọng tâm “${focusProduct}” không khớp sản phẩm hợp lệ trong catalog hoặc bảng giá chương trình.`);
+  const options = focuses.length
+    ? [undefined, ...STANDARD_GIFTS].flatMap((gift) => optionsForGift(focuses, candidates, gift)).sort(compareOptions)
+    : [];
+  if (focuses.length && !options.length) reasons.push("Không có hàng bù khác SKU đủ để toàn suất không lỗ. Kiểm tra giá vốn, giá chào và bảng giá chương trình.");
+  if (focuses.length && !options.some((option) => option.gift?.id === "shelf-4-tier")) reasons.push("Kệ sắt 4 tầng chưa có phương án hợp lệ: cần 1 thùng NHTT, 4 thùng hàng bù thuộc ít nhất 2 SKU và tổng suất không lỗ.");
   return {
-    options: allowed.sort((a, b) => new Decimal(a.subsidy).cmp(b.subsidy) || a.cases - b.cases || b.variantCount - a.variantCount || b.skuCount - a.skuCount),
+    options,
     reasons,
+    focusProduct,
     excluded: products.filter((p) => !p.archived && !p.deletedAt && !priceCapOf(p)).map((p) => ({ id: p.id, name: p.name, reason: "Thiếu ánh xạ trong bảng giá chương trình" })),
   };
 }

@@ -307,6 +307,8 @@ export interface Program {
     giftId?: string;
     giftValue?: Money;
     cases: number;
+    focusProductIds?: string[];
+    compensationProductIds?: string[];
     createdFromSignedPreview: true;
   };
 }
