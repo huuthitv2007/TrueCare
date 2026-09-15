@@ -9,7 +9,7 @@ import {
   reportRows,
   reportTotals,
 } from "../lib/reporting";
-import { useWorkspace } from "../api";
+import { request, useWorkspace } from "../api";
 import {
   Badge,
   Button,
@@ -25,8 +25,18 @@ import {
   today,
 } from "../ui";
 
+type HptSaleOutReport = {
+  source: "HPT DMS";
+  from: string;
+  to: string;
+  retrievedAt: string;
+  quantity: number;
+  total: string;
+  rows: { date: string; customer: string; amount: string }[];
+};
+
 export function SalesReport({ mode }: { mode: ReportMode }) {
-  const { state } = useWorkspace();
+  const { state, user, adminTarget } = useWorkspace();
   const initial = {
     from: state.settings.periodStart,
     to: today(),
@@ -37,6 +47,9 @@ export function SalesReport({ mode }: { mode: ReportMode }) {
   const [applied, setApplied] = useState(initial);
   const [groups, setGroups] = useState<string[]>(["date"]);
   const [detail, setDetail] = useState<ReportRow[] | null>(null);
+  const [hpt, setHpt] = useState<HptSaleOutReport | null>(null);
+  const [hptError, setHptError] = useState("");
+  const [hptLoading, setHptLoading] = useState(false);
   const rows = useMemo(
     () => reportRows(state, mode, applied),
     [state, mode, applied],
@@ -46,6 +59,22 @@ export function SalesReport({ mode }: { mode: ReportMode }) {
   const reset = () => {
     setDraft(initial);
     setApplied(initial);
+  };
+  const loadHpt = async () => {
+    setHptLoading(true);
+    setHptError("");
+    try {
+      setHpt(
+        await request<HptSaleOutReport>(
+          `/api/integrations/hpt/sale-out?from=${encodeURIComponent(applied.from)}&to=${encodeURIComponent(applied.to)}`,
+        ),
+      );
+    } catch (error) {
+      setHpt(null);
+      setHptError((error as Error).message);
+    } finally {
+      setHptLoading(false);
+    }
   };
   const addGroup = (value: string) =>
     setGroups((old) => (old.includes(value) ? old : [...old, value]));
@@ -155,6 +184,44 @@ export function SalesReport({ mode }: { mode: ReportMode }) {
           </span>
         </div>
       </Card>
+      {mode === "delivered" && user.role === "admin" && !adminTarget && (
+        <Card
+          title="Đối chiếu thực giao HPT DMS"
+          subtitle="Đọc báo cáo HPT theo ngày và khách hàng. Dữ liệu này không tự chốt toa, không thay KPI hoặc quỹ trong TrueCare."
+          actions={
+            <Button onClick={() => void loadHpt()} disabled={hptLoading}>
+              {hptLoading ? "Đang tải HPT…" : "Tải dữ liệu HPT"}
+            </Button>
+          }
+        >
+          {hptError ? (
+            <Badge tone="amber">{hptError}</Badge>
+          ) : hpt ? (
+            <>
+              <div className="stats-inline">
+                <span>Khoảng HPT <strong>{day(hpt.from)} – {day(hpt.to)}</strong></span>
+                <span>Số lượng HPT <strong>{hpt.quantity}</strong></span>
+                <span>Thực giao HPT <strong>{money(hpt.total)}</strong></span>
+                <span>TrueCare <strong>{money(total.revenue)}</strong></span>
+                <span>
+                  Chênh lệch{" "}
+                  <strong className={BigInt(hpt.total) - BigInt(total.revenue) < 0n ? "negative" : "positive"}>
+                    {money((BigInt(hpt.total) - BigInt(total.revenue)).toString())}
+                  </strong>
+                </span>
+              </div>
+              <div className="table-scroll" tabIndex={0} role="region" aria-label="Dữ liệu thực giao từ HPT DMS">
+                <table>
+                  <thead><tr><th>Ngày</th><th>Khách hàng HPT</th><th className="numeric">Thực giao</th></tr></thead>
+                  <tbody>{hpt.rows.map((row, index) => <tr key={`${row.date}-${row.customer}-${index}`}><td>{day(row.date)}</td><td>{row.customer}</td><td className="numeric">{money(row.amount)}</td></tr>)}</tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <p className="muted">Tải dữ liệu để so sánh báo cáo HPT với các phiếu thực giao đã ghi trong TrueCare.</p>
+          )}
+        </Card>
+      )}
       <div className="report-layout">
         <Card
           title="Nhóm kết quả"

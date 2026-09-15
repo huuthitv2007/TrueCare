@@ -6,6 +6,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { previewPrograms, DomainError, assert, reservedStock } from "./domain.js";
+import { fetchHptSaleOut } from "./hpt-saleout.js";
 import { createSupabaseAdapter } from "./supabase-adapter.js";
 import {
   accountUser,
@@ -736,6 +737,22 @@ app.get(
       await store.getStateForOwner((res.locals.session as Session).user.id),
     ),
   ),
+);
+app.get(
+  "/api/integrations/hpt/sale-out",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    requireAdmin(session.user);
+    await consumeRateLimit(
+      rateKey("hpt-sale-out", session.user.id),
+      10,
+      60,
+      "Đang truy vấn HPT DMS quá nhanh. Vui lòng thử lại sau một phút.",
+    );
+    res.json(
+      await fetchHptSaleOut(String(req.query.from ?? ""), String(req.query.to ?? "")),
+    );
+  }),
 );
 app.post(
   "/api/commands",

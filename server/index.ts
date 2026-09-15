@@ -17,6 +17,7 @@ import {
   DomainError,
   assert,
 } from "./domain.js";
+import { fetchHptSaleOut } from "./hpt-saleout.js";
 import type { AppState, User } from "../shared/types.js";
 import { listCareRows } from "./care-api.js";
 import { markCareReviewNeeded } from "./care-domain.js";
@@ -332,6 +333,11 @@ app.post("/api/auth/revoke-sessions", (req, res) => {
   res.json({ ok: true });
 });
 app.get("/api/state", (_req, res) => res.json(read(res.locals.user.id)));
+app.get("/api/integrations/hpt/sale-out", asyncRoute(async (req, res) => {
+  const user = publicUser(res.locals.user);
+  assert(user.role === "admin", "Chỉ quản trị viên được truy cập", "FORBIDDEN");
+  res.json(await fetchHptSaleOut(String(req.query.from ?? ""), String(req.query.to ?? "")));
+}));
 app.get('/api/auth/sessions', (req,res)=>{
   const items=db.prepare('SELECT token,expires FROM sessions WHERE user_id=? AND expires>?').all(res.locals.user.id,Date.now()) as {token:string;expires:number}[];
   res.json({items:items.map(item=>({id:item.token,current:item.token===hash(cookie(req)),user_agent:'Phiên cục bộ',last_seen_at:new Date(item.expires-7*86400000).toISOString()}))});
