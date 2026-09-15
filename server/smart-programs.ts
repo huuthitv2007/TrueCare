@@ -82,6 +82,9 @@ function candidateProducts(products: Product[]) {
   return products.flatMap((product) => {
     const cardCap = priceCapOf(product);
     if (product.archived || product.deletedAt) return [];
+    // Imported historical placeholders preserve old orders only. They are not
+    // saleable catalog items and must never become a smart-program candidate.
+    if (product.code.startsWith("TC-HIST-") || normalize(product.variant).includes("chua ghi") || normalize(product.name).includes("ky 07 13")) return [];
     if (product.cost === null || product.price === null) return [];
     if (!cardCap) return [];
     const price = Decimal.min(new Decimal(cardCap), new Decimal(product.price));

@@ -262,12 +262,14 @@ describe("Quỹ thực giao và giữ ngân sách", () => {
   it("chương trình thông minh dùng giá trần nguồn, preview không giữ quỹ và token không nhận dòng giá từ client", () => {
     let s = emptyState("Quản trị viên");
     s = run(s, "saveProduct", { name: "Túi NGX 4.2KG Care", code: "NGX-4.2-TUI", variant: "Majestic đỏ", pack: 4, unit: "túi", cost: "141000", price: "160000" });
+    s = run(s, "saveProduct", { name: "Túi NGX Care 4.2kg (màu chưa ghi, kỳ 07-13/09)", code: "TC-HIST-NGX42", variant: "Chưa ghi màu", pack: 4, unit: "túi", cost: "140720", price: "151000" });
     s = run(s, "saveCustomer", { name: "Khách chương trình" });
     s = run(s, "openingBalance", { amount: "1000000", notes: "Quỹ mẫu" });
     const before = s.summary.reserved;
     const preview = previewSmartPrograms(s, { count: 2, expiresAt: "2099-01-01" });
     const selected = preview.options.find((option) => option.id === "plastic-small")!;
     assert.equal(selected.lines.find((line) => line.kind === "sale")?.price, "151000");
+    assert.equal(preview.options.flatMap((option) => option.lines).some((line) => line.productId === s.products[1].id), false);
     assert.equal(s.summary.reserved, before);
     s = execute(s, { type: "reserveSmartProgram", payload: { token: selected.token, reason: "Lưu phương án thông minh" }, version: s.version, idempotencyKey: crypto.randomUUID() }, { id: "admin", role: "admin" });
     assert.equal(s.programs.length, 1);
