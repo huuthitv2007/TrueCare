@@ -477,11 +477,46 @@ export function Fund() {
   );
 }
 export { Programs } from "./Programs";
+const attendanceLabels = {
+  worked: "Đã làm việc",
+  cancelled: "Không làm việc",
+  leave: "Nghỉ phép",
+} as const;
 export function DailyReport() {
-  const { state, command, busy, notify } = useWorkspace();
+  const { state, command, busy, notify, user, adminTarget } = useWorkspace();
   const [date, setDate] = useState(today());
   const [mode, setMode] = useState<"ordered" | "delivered">("ordered");
+  const [attendanceEditor, setAttendanceEditor] = useState(false);
+  const [attendanceStatus, setAttendanceStatus] = useState<keyof typeof attendanceLabels>("worked");
+  const [attendanceReason, setAttendanceReason] = useState("");
+  const [attendanceError, setAttendanceError] = useState("");
+  const attendance = attendanceForDate(state, date);
+  const attendanceHistory = (state.attendanceHistory ?? [])
+    .filter((item) => item.date === date)
+    .slice()
+    .sort((a, b) => b.at.localeCompare(a.at));
   const text = dailyReport(state, date, mode);
+  const openAttendanceEditor = () => {
+    setAttendanceStatus(attendance?.status ?? "worked");
+    setAttendanceReason("");
+    setAttendanceError("");
+    setAttendanceEditor(true);
+  };
+  const saveAttendance = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAttendanceError("");
+    try {
+      await command("setAttendance", {
+        date,
+        status: attendanceStatus,
+        reason: attendanceReason,
+      });
+      notify("Đã điều chỉnh điểm danh; báo cáo đã tính lại ngày làm thực tế.");
+      setAttendanceEditor(false);
+    } catch (error) {
+      setAttendanceError(error instanceof Error ? error.message : "Không thể lưu điều chỉnh điểm danh.");
+    }
+  };
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -540,9 +575,54 @@ export function DailyReport() {
           </Button>
         </div>
         <AttendancePanel date={date} />
-        <Notice>Thời gian đã bán là ngày làm thực tế; tổng ngày là kế hoạch. Đặt lại chỉ đổi bộ lọc.</Notice>
+        {user.role === "admin" && (
+          <Card
+            title="Điều chỉnh điểm danh"
+            subtitle={adminTarget ? `Đang quản trị dữ liệu của ${adminTarget.displayName}.` : "Đang quản trị dữ liệu của bạn."}
+            actions={<Button onClick={openAttendanceEditor}>Điều chỉnh ngày đang xem</Button>}
+          >
+            <div className="toolbar">
+              <strong>{day(date)}</strong>
+              <Badge>{attendance ? attendanceLabels[attendance.status] : "Chưa xác nhận"}</Badge>
+            </div>
+            <Notice>Chỉ thay đổi ngày công trong báo cáo; đơn hàng, KPI, quỹ dư và thực giao không bị sửa.</Notice>
+            {attendanceHistory.length > 0 && (
+              <div className="attendance-history" aria-label="Lịch sử điều chỉnh điểm danh">
+                <strong>Lịch sử điều chỉnh</strong>
+                {attendanceHistory.map((item) => (
+                  <div key={item.id}>
+                    {item.before ? attendanceLabels[item.before.status] : "Chưa xác nhận"} → {attendanceLabels[item.after.status]} · {new Date(item.at).toLocaleString("vi-VN")} · {item.reason}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        )}
+        <Notice>Thời gian đã bán là ngày làm thực tế trên số ngày kế hoạch đến ngày đang xem. Đặt lại chỉ đổi bộ lọc.</Notice>
         <textarea className="report-output" aria-label="Nội dung báo cáo để sao chép" readOnly value={text} rows={17} onFocus={e => e.currentTarget.select()} />
       </Card>
+      {attendanceEditor && (
+        <Modal title="Điều chỉnh điểm danh" onClose={() => { if (!busy) setAttendanceEditor(false); }}>
+          <form className="form-stack" onSubmit={saveAttendance}>
+            {attendanceError && <Notice type="error">{attendanceError}</Notice>}
+            <Notice>
+              {day(date)} · {attendance ? attendanceLabels[attendance.status] : "Chưa xác nhận"} → {attendanceLabels[attendanceStatus]}. Báo cáo sẽ được tính lại ngay sau khi lưu.
+            </Notice>
+            <Field label="Trạng thái ngày công">
+              <select value={attendanceStatus} onChange={(event) => setAttendanceStatus(event.target.value as keyof typeof attendanceLabels)}>
+                {Object.entries(attendanceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </Field>
+            <Field label="Ghi chú điều chỉnh" hint="Có thể để trống; hệ thống ghi lý do quản trị mặc định.">
+              <textarea value={attendanceReason} onChange={(event) => setAttendanceReason(event.target.value)} />
+            </Field>
+            <div className="modal-actions">
+              <Button type="button" disabled={busy} onClick={() => setAttendanceEditor(false)}>Hủy</Button>
+              <Button variant="primary" busy={busy} disabled={attendance?.status === attendanceStatus}>Lưu điều chỉnh</Button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </>
   );
 }

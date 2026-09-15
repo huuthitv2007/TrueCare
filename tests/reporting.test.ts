@@ -194,6 +194,24 @@ test("daily report counts only worked attendance days and omits method line", ()
   assert.doesNotMatch(text, /Cách ghi nhận/);
 });
 
+test("daily report shows attendance against scheduled days elapsed to the report date", () => {
+  let s = emptyState("Nhân viên thử");
+  s.settings.periodStart = "2026-09-07";
+  s.settings.periodEnd = "2026-09-30";
+  const run = (date: string, status: "worked" | "cancelled" | "leave") => {
+    s = execute(s, {
+      type: "setAttendance",
+      payload: { date, status, reason: `Trạng thái ${status}` },
+      version: s.version,
+      idempotencyKey: crypto.randomUUID(),
+    }, { id: "admin-test", role: "admin", now: "2026-09-15T12:00:00Z" });
+  };
+  run("2026-09-07", "cancelled");
+  for (const date of ["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-12", "2026-09-14"]) run(date, "worked");
+  run("2026-09-13", "leave");
+  assert.match(dailyReport(s, "2026-09-14"), /_Thời gian đã bán: 6\/7 ngày/);
+});
+
 test("daily report includes completed care visits", () => {
   const s = emptyState("Nhân viên thử");
   s.visits.push({ id: "visit-1", customerId: "customer-1", date: "2026-09-03", notes: "Đã chăm sóc" });

@@ -25,3 +25,26 @@ test("employee corrects today's attendance and requests a past day without addin
   expect(fixture.getState().attendanceRequests?.find(item => item.date === past)?.status).toBe("pending");
   await expect(page.getByRole("button", { name: "Duyệt bổ sung toàn đội" })).toHaveCount(0);
 });
+
+test("admin corrects one historical attendance day without an entered reason", async ({ page }) => {
+  const state = sampleState();
+  state.settings.periodStart = "2026-09-07";
+  state.attendance = [
+    { date: "2026-09-07", status: "cancelled", updatedAt: "2026-09-15T00:00:00.000Z", reason: "Chưa trở lại làm" },
+    ...["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-12"].map(date => ({ date, status: "worked" as const, updatedAt: "2026-09-15T00:00:00.000Z", reason: "Đi làm" })),
+    { date: "2026-09-13", status: "leave" as const, updatedAt: "2026-09-15T00:00:00.000Z", reason: "Nghỉ Chủ nhật" },
+    { date: businessDate(), status: "worked" as const, updatedAt: "2026-09-15T00:00:00.000Z", reason: "E2E setup" },
+  ];
+  const fixture = await mockWorkspace(page, { state, role: "admin" });
+  await page.goto("/report");
+  await page.getByLabel("Ngày", { exact: true }).fill("2026-09-14");
+  await page.getByRole("button", { name: "Điều chỉnh ngày đang xem", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Điều chỉnh điểm danh", exact: true });
+  await expect(dialog.getByLabel("Ghi chú điều chỉnh")).toHaveValue("");
+  await dialog.getByRole("button", { name: "Lưu điều chỉnh", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(fixture.getState().attendance?.find(item => item.date === "2026-09-14")?.status).toBe("worked");
+  expect(fixture.getState().attendanceHistory?.at(-1)?.reason).toBe("Cập nhật bởi quản trị viên");
+  await expect(page.getByLabel("Nội dung báo cáo để sao chép")).toHaveValue(/_Thời gian đã bán: 6\/7 ngày/);
+  await expect(page.getByLabel("Lịch sử điều chỉnh điểm danh")).toContainText("Chưa xác nhận → Đã làm việc");
+});

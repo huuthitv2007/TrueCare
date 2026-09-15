@@ -11,6 +11,9 @@
 .care-schedule small, .care-request small { display: block; color: var(--muted-foreground); }
 .care-request { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 .care-request p, .care-request small { flex-basis: 100%; margin: 0; }
+.attendance-history { display: grid; gap: 6px; margin-top: 12px; color: var(--muted-foreground); font-size: 13px; }
+.attendance-history > strong { color: var(--foreground); }
+.attendance-history > div { overflow-wrap: anywhere; }
 .care-calendar-month .care-schedule .route-customer-chips { display: none; }
 @media (max-width: 1279px) { .care-calendar-week, .care-calendar-month { grid-template-columns: repeat(3, minmax(0, 1fr)); } .care-calendar-month .care-calendar-day { grid-column-start: auto !important; } }
 @media (max-width: 767px) {

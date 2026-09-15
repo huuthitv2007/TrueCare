@@ -363,7 +363,7 @@ export function dailyReport(
       cfg.workDays,
       cfg.holidays,
     ),
-    allDays = workDaysBetween(start, end, cfg.workDays, cfg.holidays),
+    plannedElapsed = workDaysBetween(start, date, cfg.workDays, cfg.holidays),
     elapsed = attendanceDaysBetween(state, start, date);
   const shortfall = Decimal.max(0, D(cfg.monthlyTarget).minus(sales));
   const newDay = state.customers.filter((c) => c.openedDate === date).length,
@@ -401,7 +401,7 @@ export function dailyReport(
     `_Số ASO: ${cfg.aso}`,
     `_DS: ${fmt(daySales)}đ / ${fmt(cfg.dailyTarget)}đ / ${pct(daySales, cfg.dailyTarget)}`,
     `_Lũy tiến: ${fmt(sales)}đ / ${fmt(cfg.monthlyTarget)}đ / ${pct(sales, cfg.monthlyTarget)}`,
-    `_Thời gian đã bán: ${elapsed}/${allDays} ngày / ${pct(elapsed, allDays)}`,
+    `_Thời gian đã bán: ${elapsed}/${plannedElapsed} ngày / ${pct(elapsed, plannedElapsed)}`,
     `_DS còn lại: ${remainingDays ? fmt(shortfall.div(remainingDays)) + "đ/ngày (" + remainingDays + " ngày còn lại)" : "Hết ngày làm việc; còn thiếu " + fmt(shortfall) + "đ"}`,
     `_ĐH: ${daily.orders} / Lũy tiến: ${total.orders + Number(cfg.openingOrders || 0)}`,
     `_MM: ${newDay} / Lũy tiến: ${newPeriod + Number(cfg.openingCustomers || 0)} / ${cfg.newCustomerTarget}`,
