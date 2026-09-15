@@ -19,6 +19,7 @@ import type {
 import { defaultCatalogs } from "../shared/catalogs.js";
 import { businessDate } from "../shared/business-date.js";
 import { executeCareCommand, markCareReviewNeeded } from "./care-domain.js";
+import { SMART_PRICEBOOK, signSmartProposal, smartProgramPreview, verifySmartProposal } from "./smart-programs.js";
 
 Decimal.set({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
 export class DomainError extends Error {
@@ -152,7 +153,7 @@ const deliveryEmployeeSales = (
       const line = s.orders
         .find((o) => o.id === d.orderId)
         ?.lines.find((l) => l.id === part.lineId);
-      return line?.cost != null ? D(line.cost).times(part.quantity) : 0;
+      return line?.cost != null && line.kpiEligible !== false ? D(line.cost).times(part.quantity) : 0;
     }),
   );
 const returnEmployeeSales = (s: AppState, r: AppState["returns"][number]) =>
@@ -161,7 +162,7 @@ const returnEmployeeSales = (s: AppState, r: AppState["returns"][number]) =>
       const line = s.orders
         .find((o) => o.id === r.orderId)
         ?.lines.find((l) => l.id === part.lineId);
-      return line?.cost != null ? D(line.cost).times(part.quantity) : 0;
+      return line?.cost != null && line.kpiEligible !== false ? D(line.cost).times(part.quantity) : 0;
     }),
   );
 export function refresh(s: AppState) {
@@ -302,7 +303,7 @@ function stockCheck(
   excludeProgram?: string,
   count = 1,
 ) {
-  for (const productId of new Set(ls.map((l) => l.productId))) {
+  for (const productId of new Set(ls.filter((l) => !l.virtualGift).map((l) => l.productId))) {
     const inv = s.inventory.find((i) => i.productId === productId);
     if (!inv?.tracked) continue;
     const need =
@@ -352,6 +353,7 @@ function audit(
 function confirmDraft(s: AppState, o: Order) {
   assert(o.status === "draft", "Toa không còn ở trạng thái nháp");
   for (const line of o.lines) {
+    if (line.virtualGift) continue;
     const product = found(s.products, line.productId);
     assert(!product.archived && !product.deletedAt, "Sản phẩm không còn kinh doanh", "CONFLICT");
     line.cost = product.cost;
@@ -373,7 +375,7 @@ export function execute(
   command: Command,
   actor?: Actor,
 ): AppState {
-  if (["deleteCatalogEntry", "reverseFundEntry", "clearInventory", "archiveProgram", "restoreProgramVisibility"].includes(command.type)) {
+  if (["deleteCatalogEntry", "reverseFundEntry", "clearInventory", "archiveProgram", "restoreProgramVisibility", "reserveSmartProgram"].includes(command.type)) {
     assert(actor?.role === "admin", "Chỉ quản trị viên được thực hiện thao tác này", "FORBIDDEN");
     assert(String(command.payload?.reason ?? "").trim().length >= 3, "Cần lý do từ 3 ký tự");
   }
@@ -1148,6 +1150,36 @@ export function execute(
       });
       break;
     }
+    case "reserveSmartProgram": {
+      assert(actor?.role === "admin", "Chỉ quản trị viên được lưu chương trình thông minh", "FORBIDDEN");
+      const proposal = verifySmartProposal(p.token);
+      assert(proposal, "Phương án đã hết hạn hoặc không hợp lệ. Hãy xem trước lại.", "CONFLICT");
+      assert(proposal.version === state.version, "Dữ liệu đã thay đổi. Hãy xem trước lại.", "CONFLICT");
+      assert(proposal.sharedVersion === state.sharedVersion, "Danh mục đã thay đổi. Hãy xem trước lại.", "CONFLICT");
+      assert(proposal.inventoryVersion === state.inventoryVersion, "Kho đã thay đổi. Hãy xem trước lại.", "CONFLICT");
+      assert(validDate(proposal.expiresAt) >= date(), "Ngày hết hạn phải từ hôm nay");
+      const count = positiveQuantity(proposal.count);
+      const rechecked = smartProgramPreview(s.products, s.summary.available);
+      const option = rechecked.options.find((item) => item.id === proposal.option.id);
+      assert(option, "Phương án không còn hợp lệ theo bảng giá hoặc quỹ hiện tại", "CONFLICT");
+      assert(JSON.stringify(option.lines) === JSON.stringify(proposal.option.lines), "Bảng giá hoặc chi phí phương án đã thay đổi. Hãy xem trước lại.", "CONFLICT");
+      const subsidy = D(option.subsidy);
+      assert(subsidy.lte(200000), "Vượt 200.000đ hỗ trợ cho một suất");
+      refresh(s);
+      assert(D(s.summary.available).gte(subsidy.times(count)), "Không đủ quỹ khả dụng cho số suất", "INSUFFICIENT_FUND");
+      const actualLines = option.lines.map((line) => ({ ...line, id: id() }));
+      stockCheck(s, actualLines, undefined, undefined, count);
+      s.programs.push({
+        id: id(), name: `Chương trình thông minh · ${option.label}`, mode: "bundle",
+        lines: actualLines, count, remaining: count, price: option.price, margin: option.margin,
+        subsidy: option.subsidy, reserved: money(subsidy.times(count)), guaranteeStock: true,
+        status: "active", expiresAt: proposal.expiresAt, seed: 0,
+        smart: { algorithmVersion: SMART_PRICEBOOK.algorithmVersion, pricebookId: SMART_PRICEBOOK.id,
+          pricebookHash: SMART_PRICEBOOK.sourceHash, giftId: option.gift?.id, giftValue: option.gift?.value,
+          cases: option.cases, createdFromSignedPreview: true },
+      });
+      break;
+    }
     case "archiveProgram": {
       const prog = found(s.programs, p.id);
       assert(!prog.archivedAt, "Chương trình đã được lưu trữ", "CONFLICT");
@@ -1182,6 +1214,7 @@ export function execute(
       const customer=found(s.customers, p.customerId);
       assert(!customer.deletedAt&&!customer.mergedInto&&!customer.archived,"Khách hàng không còn hoạt động","CONFLICT");
       for (const l of prog.lines) {
+        if (l.virtualGift) continue;
         const prod = found(s.products, l.productId);
         assert(!prod.archived&&!prod.deletedAt,"Sản phẩm không còn kinh doanh","CONFLICT");
         assert(
@@ -1372,5 +1405,31 @@ export function previewPrograms(s: AppState, p: any) {
       ? "Phương án được kiểm tra theo bảng giá hiện tại. Chưa giữ quỹ."
       : "Chưa tìm được phương án trong 2.000 ứng viên. Thử giảm quà/chiết khấu hoặc đổi phối hợp.",
     seed,
+  };
+}
+
+/** Preview has no side effect. The token binds its option and workspace state for ten minutes. */
+export function previewSmartPrograms(s: AppState, p: any) {
+  const count = positiveQuantity(p?.count ?? 1);
+  const expiresAt = validDate(p?.expiresAt ?? date());
+  assert(expiresAt >= date(), "Ngày hết hạn phải từ hôm nay");
+  refresh(s);
+  const raw = smartProgramPreview(s.products, s.summary.available);
+  const preview = {
+    ...raw,
+    options: raw.options.filter((option) => D(option.subsidy).times(count).lte(s.summary.available)),
+  };
+  if (!preview.options.length && raw.options.length)
+    preview.reasons.push("Quỹ khả dụng không đủ cho số suất đã chọn.");
+  return {
+    ...preview,
+    options: preview.options.map((option) => ({
+      ...option,
+      totalReserved: money(D(option.subsidy).times(count)),
+      availableAfter: money(D(s.summary.available).minus(D(option.subsidy).times(count))),
+      token: signSmartProposal({ exp: Date.now() + 10 * 60 * 1000, version: s.version,
+        sharedVersion: s.sharedVersion, inventoryVersion: s.inventoryVersion, count, expiresAt, option }),
+    })),
+    count, expiresAt, pricebook: SMART_PRICEBOOK,
   };
 }

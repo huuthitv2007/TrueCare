@@ -14,6 +14,7 @@ import {
   execute,
   refresh,
   previewPrograms,
+  previewSmartPrograms,
   DomainError,
   assert,
 } from "./domain.js";
@@ -287,6 +288,7 @@ for (const [path,resource] of [["route-schedules","routeSchedules"],["attendance
 app.get("/api/admin/workspaces/:userId", asyncRoute((req,res) => res.json({state:read(String(req.params.userId))})));
 app.post("/api/admin/workspaces/:userId/commands", asyncRoute((req,res) => {
   const owner = String(req.params.userId), actor = publicUser(res.locals.user);
+  assert(req.body.command?.type !== "reserveProgram", "Tạo chương trình thủ công đã được thay bằng chương trình thông minh", "FORBIDDEN");
   const reason = String(req.body.reason ?? "").trim() || "Cập nhật bởi quản trị viên";
   assert(reason.length <= 1000,"Lý do quản trị không được quá 1.000 ký tự");
   const command = {...req.body.command,payload:{...req.body.command?.payload,reason}};
@@ -357,6 +359,7 @@ app.post(
   asyncRoute((req, res) => {
     const owner = res.locals.user.id;
     const cmd = req.body;
+    assert(cmd?.type !== "reserveProgram", "Tạo chương trình thủ công đã được thay bằng chương trình thông minh", "FORBIDDEN");
     assert(
       typeof cmd.idempotencyKey === "string" &&
         cmd.idempotencyKey.length >= 8 &&
@@ -444,6 +447,12 @@ app.post(
   "/api/programs/preview",
   asyncRoute((req, res) =>
     res.json(previewPrograms(read(res.locals.user.id), req.body)),
+  ),
+);
+app.post(
+  "/api/programs/smart-preview",
+  asyncRoute((req, res) =>
+    res.json(previewSmartPrograms(read(res.locals.user.id), req.body)),
   ),
 );
 app.post(

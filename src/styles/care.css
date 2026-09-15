@@ -14,6 +14,18 @@
 .attendance-history { display: grid; gap: 6px; margin-top: 12px; color: var(--muted-foreground); font-size: 13px; }
 .attendance-history > strong { color: var(--foreground); }
 .attendance-history > div { overflow-wrap: anywhere; }
+.smart-program-grid { align-items: start; }
+.smart-options { display: grid; gap: 12px; margin-top: 18px; }
+.smart-options > small { color: var(--muted-foreground); }
+.smart-option { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.smart-option header, .smart-program-row, .program-actions { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.smart-option header small, .smart-program-row small { display: block; color: var(--muted-foreground); margin-top: 4px; }
+.smart-option-lines { display: grid; gap: 5px; padding: 10px; background: var(--muted); border-radius: 7px; font-size: 14px; }
+.smart-option p { margin: 0; }
+.smart-program-row { align-items: flex-start; flex-wrap: wrap; }
+.smart-program-row > span { display: grid; justify-items: end; gap: 5px; }
+.program-actions { justify-content: flex-end; flex-wrap: wrap; }
+@media (max-width: 767px) { .smart-option header, .smart-program-row { align-items: stretch; flex-direction: column; } .smart-program-row > span { justify-items: start; } .program-actions { justify-content: stretch; } .program-actions .btn, .smart-option .btn { min-height: 44px; } }
 .care-calendar-month .care-schedule .route-customer-chips { display: none; }
 @media (max-width: 1279px) { .care-calendar-week, .care-calendar-month { grid-template-columns: repeat(3, minmax(0, 1fr)); } .care-calendar-month .care-calendar-day { grid-column-start: auto !important; } }
 @media (max-width: 767px) {

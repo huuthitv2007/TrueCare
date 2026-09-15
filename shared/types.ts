@@ -92,6 +92,10 @@ export interface OrderLine {
   delivered: number;
   returned: number;
   fixedPrice?: boolean;
+  /** A non-catalogue gift created only by a signed smart-program proposal. */
+  virtualGift?: string;
+  /** Gifts such as a shelf are not sales KPI; Care product gifts remain true. */
+  kpiEligible?: boolean;
 }
 export interface OrderRevision {
   id: string;
@@ -296,6 +300,15 @@ export interface Program {
   archivedAt?: string;
   archivedBy?: string;
   archiveReason?: string;
+  smart?: {
+    algorithmVersion: string;
+    pricebookId: string;
+    pricebookHash: string;
+    giftId?: string;
+    giftValue?: Money;
+    cases: number;
+    createdFromSignedPreview: true;
+  };
 }
 export interface Settings {
   displayName: string;

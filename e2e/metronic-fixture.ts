@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { emptyState, execute } from "../server/domain";
+import { emptyState, execute, previewSmartPrograms } from "../server/domain";
 import type { AppState } from "../shared/types";
 import { businessDate as today } from "../shared/business-date";
 
@@ -87,6 +87,8 @@ export async function mockWorkspace(
       p = url.pathname;
     if (p === "/api/auth/session") return route.fulfill({ json: { user } });
     if (p === "/api/state") return route.fulfill({ json: state });
+    if (p === "/api/programs/smart-preview")
+      return route.fulfill({ json: previewSmartPrograms(state, req.postDataJSON()) });
     if (p.startsWith("/api/admin/") && role !== "admin") return route.fulfill({ status: 403, json: { error: { code: "FORBIDDEN", message: "Chỉ quản trị viên được thực hiện" } } });
     if (p === "/api/admin/workspaces/qa")
       return route.fulfill({ json: { state } });

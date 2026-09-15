@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { previewPrograms, DomainError, assert, reservedStock } from "./domain.js";
+import { previewPrograms, previewSmartPrograms, DomainError, assert, reservedStock } from "./domain.js";
 import { fetchHptSaleOut } from "./hpt-saleout.js";
 import { createSupabaseAdapter } from "./supabase-adapter.js";
 import {
@@ -759,6 +759,7 @@ app.post(
   route(async (req, res) => {
     const session = res.locals.session as Session;
     const command = req.body as Command;
+    assert(command?.type !== "reserveProgram", "Tạo chương trình thủ công đã được thay bằng chương trình thông minh", "FORBIDDEN");
     assert(
       typeof command.idempotencyKey === "string" &&
         command.idempotencyKey.length >= 8,
@@ -797,6 +798,14 @@ app.post(
     res.json(
       previewPrograms(await store.getStateForOwner(session.user.id), req.body),
     );
+  }),
+);
+app.post(
+  "/api/programs/smart-preview",
+  route(async (req, res) => {
+    const session = res.locals.session as Session;
+    requireAdmin(session.user);
+    res.json(previewSmartPrograms(await store.getStateForOwner(session.user.id), req.body));
   }),
 );
 app.post(
@@ -1369,6 +1378,7 @@ app.post(
     assert(!target.deleted_at, "Tài khoản đang nằm trong thùng rác", "CONFLICT");
     const reason = reasonOf(req.body.reason);
     const command = req.body.command as Command;
+    assert(command?.type !== "reserveProgram", "Tạo chương trình thủ công đã được thay bằng chương trình thông minh", "FORBIDDEN");
     assert(
       command && typeof command.idempotencyKey === "string",
       "Thiếu thao tác quản trị",
@@ -1406,6 +1416,13 @@ app.post(
     res.json(
       previewPrograms(await store.getStateForOwner(target.user_id), req.body),
     );
+  }),
+);
+app.post(
+  "/api/admin/workspaces/:userId/programs/smart-preview",
+  route(async (req, res) => {
+    const target = await accountOf(String(req.params.userId));
+    res.json(previewSmartPrograms(await store.getStateForOwner(target.user_id), req.body));
   }),
 );
 app.post(

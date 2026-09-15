@@ -1,47 +1,36 @@
 import { test, expect } from "@playwright/test";
 import { mockWorkspace, sampleState } from "./metronic-fixture";
-import { execute } from "../server/domain";
 
-test("program form lists eligible products and explains blocked products", async ({ page }) => {
+function smartState() {
   const state = sampleState();
-  state.products.push({
-    id: "blocked-product",
-    name: "Blocked product",
-    code: "BLOCK",
-    group: "QA",
-    brand: "TrueCare",
-    variant: "",
-    unit: "can",
-    pack: 1,
-    cost: null,
-    price: "120000",
-    effectiveDate: "2026-09-13",
-  });
-  await mockWorkspace(page, { state });
+  state.products[0] = {
+    ...state.products[0], name: "Túi NGX 4.2KG Care", code: "NGX-4.2-TUI", variant: "Majestic đỏ",
+    pack: 4, cost: "141000", price: "160000",
+  };
+  state.ledger.push({ id: "fund", date: "2026-09-15", type: "opening", amount: "1000000", referenceId: "", notes: "Quỹ QA" });
+  return state;
+}
+
+test("admin previews then saves a signed smart program without manual prices", async ({ page }) => {
+  const fixture = await mockWorkspace(page, { state: smartState() });
   await page.goto("/programs");
-  const productSelect = page.getByLabel(/Th.m s.n ph.m/i);
-  await expect(productSelect).toBeVisible();
-  await expect(productSelect.locator("option:not([disabled])").filter({ hasText: /TC-001/ })).toHaveCount(1);
-  await expect(productSelect.locator("option[disabled]").filter({ hasText: /BLOCK/ })).toHaveCount(1);
-  await productSelect.selectOption({ index: 1 });
-  await expect(page.getByTestId("program-selected-product")).toContainText(/TrueCare/);
-  await expect(page.getByText(/1 sản phẩm đang bị ẩn khỏi danh sách chọn/i)).toBeVisible();
+  await page.getByRole("button", { name: "Tạo phương án", exact: true }).click();
+  await expect(page.getByText("Phương án hợp lệ", { exact: true })).toBeVisible();
+  await expect(page.getByText(/151\.000/).first()).toBeVisible();
+  await page.getByRole("button", { name: "Chọn & lưu chương trình", exact: true }).first().click();
+  await expect(page.getByText(/Chương trình thông minh/)).toBeVisible();
+  expect(fixture.commands.some((command) => command.type === "reserveSmartProgram")).toBe(true);
+  expect(fixture.commands.find((command) => command.type === "reserveSmartProgram")?.payload.lines).toBeUndefined();
+  await page.getByRole("button", { name: "Xóa chương trình", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Xóa chương trình đã lưu", exact: true });
+  await expect(dialog.getByText(/giải phóng/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Lưu trữ chương trình", exact: true }).click();
+  expect(fixture.commands.some((command) => command.type === "archiveProgram")).toBe(true);
 });
 
-test("employee uses a program allocation to create one confirmed order", async ({ page }) => {
-  let state = sampleState();
-  state = execute(state, { type: "reserveProgram", payload: { name: "Chương trình QA", count: 2, expiresAt: "2099-01-01", lines: [{ productId: state.products[0].id, quantity: 1, price: "120000" }] }, version: state.version, idempotencyKey: crypto.randomUUID() }, { id: "qa", role: "employee" });
-  const count = state.orders.length;
-  const fixture = await mockWorkspace(page, { state, role: "employee" });
+test("only an admin sees smart program creation and archive action", async ({ page }) => {
+  await mockWorkspace(page, { state: smartState(), role: "employee" });
   await page.goto("/programs");
-  await page.getByRole("button", { name: "Dùng suất", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Dùng suất tạo toa", exact: true });
-  await dialog.getByLabel("Khách hàng nhận suất").selectOption(state.customers[0].id);
-  await dialog.getByLabel("Số suất sử dụng").fill("1");
-  await dialog.getByRole("button", { name: "Xác nhận tạo toa", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  expect(fixture.getState().orders).toHaveLength(count + 1);
-  expect(fixture.getState().orders.at(-1)?.status).toBe("confirmed");
-  expect(fixture.getState().programs[0].remaining).toBe(1);
-  expect(fixture.commands.filter(command => command.type === "applyProgram")).toHaveLength(1);
+  await expect(page.getByText(/Chỉ quản trị viên được tạo hoặc lưu/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Tạo phương án", exact: true })).toHaveCount(0);
 });

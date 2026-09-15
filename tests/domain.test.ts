@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { emptyState, execute, previewPrograms } from "../server/domain.js";
+import { emptyState, execute, previewPrograms, previewSmartPrograms } from "../server/domain.js";
 import type { AppState } from "../shared/types.js";
 const run = (s: AppState, type: string, payload: any) =>
   execute(s, {
@@ -258,6 +258,37 @@ describe("Quỹ thực giao và giữ ngân sách", () => {
       { id: "admin", role: "admin" },
     );
     assert.equal(previewPrograms(s, p).options.length, 0);
+  });
+  it("chương trình thông minh dùng giá trần nguồn, preview không giữ quỹ và token không nhận dòng giá từ client", () => {
+    let s = emptyState("Quản trị viên");
+    s = run(s, "saveProduct", { name: "Túi NGX 4.2KG Care", code: "NGX-4.2-TUI", variant: "Majestic đỏ", pack: 4, unit: "túi", cost: "141000", price: "160000" });
+    s = run(s, "saveCustomer", { name: "Khách chương trình" });
+    s = run(s, "openingBalance", { amount: "1000000", notes: "Quỹ mẫu" });
+    const before = s.summary.reserved;
+    const preview = previewSmartPrograms(s, { count: 2, expiresAt: "2099-01-01" });
+    const selected = preview.options.find((option) => option.id === "plastic-small")!;
+    assert.equal(selected.lines.find((line) => line.kind === "sale")?.price, "151000");
+    assert.equal(s.summary.reserved, before);
+    s = execute(s, { type: "reserveSmartProgram", payload: { token: selected.token, reason: "Lưu phương án thông minh" }, version: s.version, idempotencyKey: crypto.randomUUID() }, { id: "admin", role: "admin" });
+    assert.equal(s.programs.length, 1);
+    assert.equal(s.programs[0].smart?.pricebookId, "truecare-program-2026-06-10");
+    assert.equal(s.programs[0].lines.find((line) => line.virtualGift)?.kpiEligible, false);
+    assert.throws(() => execute(s, { type: "reserveSmartProgram", payload: { token: selected.token + "x", reason: "Lưu phương án thông minh" }, version: s.version, idempotencyKey: crypto.randomUUID() }, { id: "admin", role: "admin" }), /hết hạn|không hợp lệ/);
+  });
+  it("tặng phẩm chuẩn trừ quỹ khi giao nhưng không cộng KPI, còn nhân viên không thể lưu phương án", () => {
+    let s = emptyState("Quản trị viên");
+    s = run(s, "saveProduct", { name: "Túi NGX 4.2KG Care", code: "NGX-4.2-TUI", pack: 4, unit: "túi", cost: "141000", price: "151000" });
+    s = run(s, "saveCustomer", { name: "Khách chương trình" });
+    s = run(s, "openingBalance", { amount: "1000000", notes: "Quỹ mẫu" });
+    const preview = previewSmartPrograms(s, { count: 1, expiresAt: "2099-01-01" });
+    const selected = preview.options.find((option) => option.id === "plastic-small")!;
+    assert.throws(() => execute(s, { type: "reserveSmartProgram", payload: { token: selected.token, reason: "Lưu phương án" }, version: s.version, idempotencyKey: crypto.randomUUID() }, { id: "employee", role: "employee" }), /quản trị viên/);
+    s = execute(s, { type: "reserveSmartProgram", payload: { token: selected.token, reason: "Lưu phương án" }, version: s.version, idempotencyKey: crypto.randomUUID() }, { id: "admin", role: "admin" });
+    s = run(s, "applyProgram", { id: s.programs[0].id, customerId: s.customers[0].id, count: 1 });
+    const order = s.orders[0];
+    s = run(s, "recordDelivery", { orderId: order.id, lines: order.lines.map((line) => ({ lineId: line.id, quantity: line.quantity })) });
+    assert.equal(s.summary.delivered, "564000");
+    assert.equal(s.summary.fund, "1025000");
   });
   it("lịch theo tuyến gợi ý khách, hoàn thành ghi lượt chăm sóc và xóa mềm", () => {
     let s = emptyState("Nhân viên tuyến");

@@ -194,6 +194,8 @@ function Application() {
     const suffix =
       path === "/api/programs/preview"
         ? "programs/preview"
+        : path === "/api/programs/smart-preview"
+          ? "programs/smart-preview"
         : path === "/api/imports/preview" || path === "/api/import/preview"
           ? "imports/preview"
           : "";

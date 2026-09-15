@@ -1,112 +1,41 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import Decimal from "decimal.js";
 import { useWorkspace } from "../api";
-import { Button, Card, Empty, Field, Heading, Modal, Notice, Status, money, today, matches } from "../ui";
-import type { Program } from "../../shared/types";
+import { Button, Card, Empty, Field, Heading, Modal, Notice, Status, day, money, today } from "../ui";
+import type { OrderLine, Program } from "../../shared/types";
+
+type SmartOption = { id: string; label: string; token: string; price: string; margin: string; subsidy: string; totalReserved: string; availableAfter: string; cases: number; skuCount: number; variantCount: number; gift?: { id: string; name: string; value: string }; lines: OrderLine[]; };
+type SmartPreview = { options: SmartOption[]; reasons: string[]; excluded: { id: string; name: string; reason: string }[]; pricebook: { sourceName: string; effectiveDate: string } };
 
 export function Programs() {
-  const { state, command, busy, user, adminTarget } = useWorkspace();
+  const { state, command, workspaceRequest, busy, user, adminTarget } = useWorkspace();
   const navigate = useNavigate();
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("active");
-  const [name, setName] = useState("Suất chào hàng");
-  const [count, setCount] = useState(1);
-  const [expires, setExpires] = useState(today());
-  const [allow, setAllow] = useState(false);
-  const [lines, setLines] = useState<{ productId: string; quantity: number; price: string }[]>([]);
-  const [error, setError] = useState("");
-  const [applying, setApplying] = useState<Program | null>(null);
-  const [customerId, setCustomerId] = useState("");
-  const [useCount, setUseCount] = useState(1);
-  const productStatus = (p: typeof state.products[number]) => p.deletedAt ? "Đang ở thùng rác" : p.archived ? "Ngừng kinh doanh" : p.cost === null && p.price === null ? "Thiếu giá vốn và giá chào" : p.cost === null ? "Thiếu giá vốn" : p.price === null ? "Thiếu giá chào" : "";
-  const eligible = state.products.filter(p => !productStatus(p) && matches(query, p.name, p.code));
-  const blocked = state.products.filter(p => productStatus(p) && matches(query, p.name, p.code));
-  const add = (id: string) => {
-    const product = eligible.find(p => p.id === id);
-    if (product && !lines.some(l => l.productId === id)) setLines([...lines, { productId: id, quantity: 1, price: product.price! }]);
-  };
-  const estimate = useMemo(() => {
-    try {
-      let price = new Decimal(0), cost = new Decimal(0);
-      for (const line of lines) {
-        const product = state.products.find(p => p.id === line.productId);
-        if (!product || productStatus(product) || !Number.isSafeInteger(line.quantity) || line.quantity < 1) return null;
-        const quote = new Decimal(line.price);
-        if (!quote.isFinite() || quote.lt(0) || quote.gt(product.price!)) return null;
-        price = price.plus(quote.times(line.quantity));
-        cost = cost.plus(new Decimal(product.cost!).times(line.quantity));
-      }
-      const subsidy = Decimal.max(0, cost.minus(price));
-      return { price, cost, subsidy, held: subsidy.times(Number.isSafeInteger(count) && count > 0 ? count : 0) };
-    } catch { return null; }
-  }, [lines, count, state.products]);
-  const save = async () => {
-    setError("");
-    try { await command("reserveProgram", { name, count, expiresAt: expires, allowSubsidy: allow, mode: "bundle", lines }); setLines([]); }
-    catch (cause) { setError((cause as Error).message); }
-  };
-  const apply = async () => {
-    if (!applying) return;
-    setError("");
-    try {
-      const result = await command("applyProgram", { id: applying.id, customerId, count: useCount, date: today() });
-      const order = result.orders.find(order => order.id === result.commandResult?.orderId);
-      setApplying(null);
-      if (order) navigate(`/orders/${order.id}`);
-    } catch (cause) { setError((cause as Error).message); }
-  };
+  const [filter, setFilter] = useState("active"), [count, setCount] = useState(1), [expires, setExpires] = useState(today());
+  const [preview, setPreview] = useState<SmartPreview | null>(null), [error, setError] = useState("");
+  const [applying, setApplying] = useState<Program | null>(null), [customerId, setCustomerId] = useState(""), [useCount, setUseCount] = useState(1);
+  const [archiving, setArchiving] = useState<Program | null>(null);
+  const canManage = user.role === "admin";
   const status = (p: Program) => p.archivedAt ? "archived" : p.status === "active" && p.expiresAt < today() ? "expired" : p.status;
-  const rows = state.programs.filter(p => filter === "all" || status(p) === filter);
-  const customers = state.customers.filter(c => !c.archived && !c.deletedAt && !c.mergedInto);
+  const rows = state.programs.filter((p) => filter === "all" || status(p) === filter);
+  const customers = state.customers.filter((c) => !c.archived && !c.deletedAt && !c.mergedInto);
+  const generate = async () => { setError(""); setPreview(null); try { setPreview(await workspaceRequest<SmartPreview>("/api/programs/smart-preview", { count, expiresAt: expires })); } catch (cause) { setError((cause as Error).message); } };
+  const save = async (option: SmartOption) => { setError(""); try { await command("reserveSmartProgram", { token: option.token, reason: "Lưu chương trình thông minh" }); setPreview(null); } catch (cause) { setError((cause as Error).message); } };
+  const apply = async () => { if (!applying) return; setError(""); try { const result = await command("applyProgram", { id: applying.id, customerId, count: useCount, date: today() }); const order = result.orders.find((item) => item.id === result.commandResult?.orderId); setApplying(null); if (order) navigate(`/orders/${order.id}`); } catch (cause) { setError((cause as Error).message); } };
+  const archive = async () => { if (!archiving) return; setError(""); try { await command("archiveProgram", { id: archiving.id, reason: "Lưu trữ chương trình theo yêu cầu quản trị" }); setArchiving(null); } catch (cause) { setError((cause as Error).message); } };
   return <>
-    <Heading title="Chương trình chào hàng" description="Tạo suất, kiểm tra ngân sách và dùng suất để lập toa." />
+    <Heading title="Chương trình chào hàng" description="Tạo phương án tự động theo giá trần đã chốt; xem trước không giữ quỹ hay tồn." />
     {error && !applying && <Notice type="error">{error}</Notice>}
-    <div className="program-grid">
-      <Card title="Tạo suất chào"><div className="form-stack">
-        <Field label="Tên chương trình"><input value={name} onChange={e => setName(e.target.value)} /></Field>
-        <div className="form-grid">
-          <Field label="Số suất"><input type="number" min="1" max="1000000" value={count} onChange={e => setCount(Number(e.target.value))} /></Field>
-          <Field label="Hết hạn"><input type="date" min={today()} value={expires} onChange={e => setExpires(e.target.value)} /></Field>
-        </div>
-        <Field label="Tìm sản phẩm"><input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Mã hoặc tên sản phẩm" /></Field>
-        <Field label="Thêm sản phẩm" hint="Chọn sản phẩm đang kinh doanh và đủ giá vốn/giá chào.">
-          <select value="" onChange={e => add(e.target.value)}><option value="">Chọn sản phẩm đủ điều kiện</option>
-            <optgroup label="Có thể dùng">{eligible.map(p => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}</optgroup>
-            <optgroup label="Chưa đủ điều kiện">{blocked.map(p => <option key={p.id} value={p.id} disabled>{p.code} · {p.name} — {productStatus(p)}</option>)}</optgroup>
-          </select>
-        </Field>
-        {blocked.length > 0 && <Notice>{blocked.length} sản phẩm đang bị ẩn khỏi danh sách chọn vì thiếu giá hoặc không còn kinh doanh.
-          {user.role === "admin" ? <Button onClick={() => navigate("/products")}>Cập nhật bảng giá</Button> : <p>Liên hệ quản trị viên để cập nhật bảng giá.</p>}
-        </Notice>}
-        {!eligible.length && <Notice type="warning">Không có sản phẩm phù hợp. Kiểm tra từ khóa hoặc giá sản phẩm.</Notice>}
-        {lines.map((line, index) => <div className="program-line" key={line.productId}>
-          <span data-testid="program-selected-product">{state.products.find(p => p.id === line.productId)?.name}</span>
-          <input aria-label={`Số lượng sản phẩm ${index + 1}`} type="number" min="1" value={line.quantity} onChange={e => setLines(lines.map((l, i) => i === index ? { ...l, quantity: Number(e.target.value) } : l))} />
-          <input aria-label={`Giá chào sản phẩm ${index + 1}`} type="number" min="0" value={line.price} onChange={e => setLines(lines.map((l, i) => i === index ? { ...l, price: e.target.value } : l))} />
-          <Button aria-label={`Bỏ sản phẩm ${index + 1}`} onClick={() => setLines(lines.filter((_, i) => i !== index))}>×</Button>
-        </div>)}
-        <label className="checkbox-field"><input type="checkbox" checked={allow} onChange={e => setAllow(e.target.checked)} />Cho phép dùng quỹ đã giao nếu cần bù</label>
-        {estimate && lines.length > 0 && <Notice>Giá trị mỗi suất: {money(estimate.price.toString())} · Cần bù: {money(estimate.subsidy.toString())} · Ngân sách sẽ giữ: {money(estimate.held.toString())}. Quỹ khả dụng: {money(state.summary.available)}.</Notice>}
-        <Notice>Mỗi suất được hỗ trợ tối đa 200.000đ. Khi lưu kiểm tra bảng giá và quỹ; khi dùng suất kiểm tra thêm tồn kho.</Notice>
-        <Button variant="primary" busy={busy} disabled={!lines.length || !estimate || !Number.isSafeInteger(count) || count < 1 || !name.trim() || expires < today()} onClick={() => void save()}>Lưu & giữ ngân sách</Button>
-      </div></Card>
-      <Card title="Chương trình đã lưu">
-        <Field label="Trạng thái chương trình"><select value={filter} onChange={e => setFilter(e.target.value)}><option value="active">Đang hoạt động</option><option value="expired">Hết hạn</option><option value="cancelled">Đã hủy</option><option value="archived">Đã lưu trữ</option><option value="all">Tất cả</option></select></Field>
-        {rows.length ? <div className="program-list">{rows.map(p => <div key={p.id}><div><strong>{p.name}</strong><small>{p.remaining}/{p.count} suất · hết hạn {p.expiresAt}</small></div><span><Status value={status(p)} /><b>Giữ {money(status(p) === "active" ? p.reserved : "0")}</b></span>
-          <Button disabled={status(p) !== "active" || p.remaining < 1} onClick={() => { setApplying(p); setUseCount(1); setCustomerId(""); setError(""); }}>Dùng suất</Button>
-        </div>)}</div> : <Empty title="Chưa có chương trình phù hợp" description="Đổi bộ lọc hoặc tạo chương trình mới." />}
+    <div className="program-grid smart-program-grid">
+      <Card title="Tạo chương trình thông minh" subtitle="Tự chọn toàn bộ hàng đủ điều kiện, ưu tiên dùng quỹ thấp nhất.">
+        {canManage ? <div className="form-stack"><div className="form-grid"><Field label="Số suất"><input aria-label="Số suất" type="number" min="1" max="1000000" value={count} onChange={(event) => setCount(Number(event.target.value))} /></Field><Field label="Hết hạn"><input aria-label="Hết hạn" type="date" min={today()} value={expires} onChange={(event) => setExpires(event.target.value)} /></Field></div><Notice>Mỗi suất bù tối đa 200.000đ. Giá bán không vượt giá thấp hơn giữa catalog và bảng giá chương trình. Chỉ phương án được chọn mới giữ quỹ/tồn.</Notice><Button variant="primary" busy={busy} disabled={!Number.isSafeInteger(count) || count < 1 || expires < today()} onClick={() => void generate()}>Tạo phương án</Button>{preview && <SmartOptions preview={preview} products={state.products} onSave={save} busy={busy} />}</div> : <Notice type="warning">Chỉ quản trị viên được tạo hoặc lưu chương trình thông minh. Bạn vẫn có thể dùng các suất đang hoạt động.</Notice>}
       </Card>
+      <Card title="Chương trình đã lưu"><Field label="Trạng thái chương trình"><select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="active">Đang hoạt động</option><option value="expired">Hết hạn</option><option value="cancelled">Đã hủy</option><option value="archived">Đã lưu trữ</option><option value="all">Tất cả</option></select></Field>{rows.length ? <div className="program-list">{rows.map((program) => <div key={program.id} className="smart-program-row"><div><strong>{program.name}</strong><small>{program.remaining}/{program.count} suất · hết hạn {day(program.expiresAt)}</small>{program.smart && <small>{program.smart.giftId ? `Tặng phẩm đã chốt: ${program.lines.find((line) => line.virtualGift)?.name ?? program.smart.giftId}` : "Không tặng phẩm"} · {program.smart.cases} thùng/suất</small>}</div><span><Status value={status(program)} /><b>Giữ {money(status(program) === "active" ? program.reserved : "0")}</b></span><div className="program-actions"><Button disabled={status(program) !== "active" || program.remaining < 1} onClick={() => { setApplying(program); setUseCount(1); setCustomerId(""); setError(""); }}>Dùng suất</Button>{canManage && !program.archivedAt && <Button variant="danger" disabled={busy} onClick={() => setArchiving(program)}>Xóa chương trình</Button>}</div></div>)}</div> : <Empty title="Chưa có chương trình phù hợp" description="Đổi bộ lọc hoặc tạo phương án mới." />}</Card>
     </div>
-    {applying && <Modal title="Dùng suất tạo toa" onClose={() => !busy && setApplying(null)}>
-      <div className="form-stack">
-        {error && <Notice type="error">{error}</Notice>}
-        <Notice>{applying.name}. Xác nhận sẽ tạo toa đã chốt và chuyển phần ngân sách giữ sang toa. {adminTarget && `Đang thao tác cho ${adminTarget.displayName}.`}</Notice>
-        <Field label="Khách hàng nhận suất"><select value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">Chọn khách</option>{customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
-        <Field label="Số suất sử dụng"><input type="number" min="1" max={applying.remaining} value={useCount} onChange={e => setUseCount(Number(e.target.value))} /></Field>
-        <p>Tổng giá trị: {money(new Decimal(applying.price).times(Number.isFinite(useCount) ? useCount : 0).toString())} · Còn lại sau sử dụng: {applying.remaining - useCount} suất.</p>
-        <div className="modal-actions"><Button disabled={busy} onClick={() => setApplying(null)}>Hủy</Button><Button variant="primary" busy={busy} disabled={!customerId || !Number.isSafeInteger(useCount) || useCount < 1 || useCount > applying.remaining} onClick={() => void apply()}>Xác nhận tạo toa</Button></div>
-      </div>
-    </Modal>}
+    {applying && <Modal title="Dùng suất tạo toa" onClose={() => !busy && setApplying(null)}><div className="form-stack">{error && <Notice type="error">{error}</Notice>}<Notice>{applying.name}. Hệ thống tạo toa đã chốt và chuyển quỹ giữ sang toa. {adminTarget && `Đang thao tác cho ${adminTarget.displayName}.`}</Notice><Field label="Khách hàng nhận suất"><select value={customerId} onChange={(event) => setCustomerId(event.target.value)}><option value="">Chọn khách</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></Field><Field label="Số suất sử dụng"><input type="number" min="1" max={applying.remaining} value={useCount} onChange={(event) => setUseCount(Number(event.target.value))} /></Field><p>Tổng giá trị: {money(Number(applying.price) * (Number.isFinite(useCount) ? useCount : 0))} · còn lại: {applying.remaining - useCount} suất.</p><div className="modal-actions"><Button disabled={busy} onClick={() => setApplying(null)}>Hủy</Button><Button variant="primary" busy={busy} disabled={!customerId || !Number.isSafeInteger(useCount) || useCount < 1 || useCount > applying.remaining} onClick={() => void apply()}>Xác nhận tạo toa</Button></div></div></Modal>}
+    {archiving && <Modal title="Xóa chương trình đã lưu" onClose={() => !busy && setArchiving(null)}><div className="form-stack"><Notice type="warning">Chương trình “{archiving.name}” sẽ được lưu trữ. Các suất còn lại bị hủy và giải phóng {money(archiving.reserved)}; toa đã tạo và lịch sử không thay đổi.</Notice><div className="modal-actions"><Button disabled={busy} onClick={() => setArchiving(null)}>Hủy</Button><Button variant="danger" busy={busy} onClick={() => void archive()}>Lưu trữ chương trình</Button></div></div></Modal>}
   </>;
+}
+
+function SmartOptions({ preview, products, onSave, busy }: { preview: SmartPreview; products: { id: string; name: string; variant: string }[]; onSave: (option: SmartOption) => void; busy: boolean }) {
+  return <div className="smart-options" aria-live="polite"><strong>Phương án hợp lệ</strong><small>Nguồn giá: {preview.pricebook.sourceName} · hiệu lực từ {day(preview.pricebook.effectiveDate)}.</small>{preview.options.map((option) => <article key={option.token} className="smart-option"><header><div><strong>{option.label}</strong><small>{option.cases} thùng · {option.skuCount} SKU · {option.variantCount} màu/biến thể</small></div><b>Bù {money(option.subsidy)}/suất</b></header><div className="smart-option-lines">{option.lines.map((line) => <span key={line.id}>{line.kind === "gift" ? "Tặng " : ""}{line.name}{line.kind === "sale" ? ` · ${line.quantity} ${line.unit} · ${money(line.price)}` : ` · ${money(line.cost)}`}{line.kind === "sale" && products.find((product) => product.id === line.productId)?.variant ? ` · ${products.find((product) => product.id === line.productId)?.variant}` : ""}</span>)}</div><p>Giá chào: <b>{money(option.price)}</b> · Quỹ giữ: <b>{money(option.totalReserved)}</b> · Quỹ còn: <b>{money(option.availableAfter)}</b></p><Button variant="primary" busy={busy} onClick={() => onSave(option)}>Chọn & lưu chương trình</Button></article>)}{!preview.options.length && <Empty title="Chưa có phương án hợp lệ" description="Kiểm tra quỹ, bảng giá, giá vốn và tồn kho." />}{preview.reasons.map((reason) => <Notice key={reason} type="warning">{reason}</Notice>)}{preview.excluded.length > 0 && <Notice>{preview.excluded.length} sản phẩm không được dùng vì thiếu ánh xạ bảng giá. Cập nhật bảng giá phiên bản mới để thêm chúng.</Notice>}</div>;
 }
